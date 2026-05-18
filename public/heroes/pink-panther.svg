@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="pantherBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fdf4ff"/>
+      <stop offset="1" stop-color="#fce7f3"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="500" fill="url(#pantherBg)"/>
+  <!-- Decorative hot-pink swooshes in the background -->
+  <g opacity="0.25" fill="#f472b6">
+    <ellipse cx="150" cy="100" rx="80" ry="20"/>
+    <ellipse cx="1050" cy="80" rx="100" ry="18"/>
+    <ellipse cx="80" cy="450" rx="120" ry="22"/>
+  </g>
+  <!-- Floor shadow -->
+  <ellipse cx="600" cy="430" rx="450" ry="14" fill="#f9a8d4" opacity="0.55"/>
+  <!-- Long stretched panther body -->
+  <ellipse cx="610" cy="370" rx="320" ry="55" fill="#ec4899"/>
+  <ellipse cx="610" cy="362" rx="300" ry="45" fill="#f472b6"/>
+  <!-- Legs -->
+  <rect x="345" y="368" width="22" height="62" rx="9" fill="#db2777"/>
+  <rect x="430" y="378" width="22" height="52" rx="9" fill="#db2777"/>
+  <rect x="780" y="378" width="22" height="52" rx="9" fill="#db2777"/>
+  <rect x="855" y="368" width="22" height="62" rx="9" fill="#db2777"/>
+  <!-- Long curling tail -->
+  <path d="M 925 370 Q 1060 350, 1095 280 Q 1115 240, 1090 215" stroke="#ec4899" stroke-width="20" fill="none" stroke-linecap="round"/>
+  <circle cx="1090" cy="208" r="9" fill="#ec4899"/>
+  <!-- Head -->
+  <ellipse cx="295" cy="338" rx="68" ry="58" fill="#ec4899"/>
+  <ellipse cx="295" cy="335" rx="60" ry="48" fill="#f472b6"/>
+  <!-- Ears -->
+  <ellipse cx="265" cy="288" rx="16" ry="24" fill="#ec4899"/>
+  <ellipse cx="325" cy="283" rx="16" ry="24" fill="#ec4899"/>
+  <ellipse cx="265" cy="293" rx="9" ry="15" fill="#fbcfe8"/>
+  <ellipse cx="325" cy="288" rx="9" ry="15" fill="#fbcfe8"/>
+  <!-- Smug closed eyes -->
+  <path d="M 268 333 Q 278 342, 288 333" stroke="#1f2937" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M 308 333 Q 318 342, 328 333" stroke="#1f2937" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <!-- Nose -->
+  <ellipse cx="298" cy="352" rx="6" ry="4.5" fill="#1f2937"/>
+  <!-- Smug smile -->
+  <path d="M 285 368 Q 295 378, 305 368" stroke="#1f2937" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- Whiskers -->
+  <g stroke="#1f2937" stroke-width="1.6" stroke-linecap="round">
+    <line x1="240" y1="355" x2="208" y2="352"/>
+    <line x1="240" y1="362" x2="208" y2="365"/>
+    <line x1="345" y1="355" x2="377" y2="352"/>
+    <line x1="345" y1="362" x2="377" y2="365"/>
+  </g>
+  <!-- Tagline -->
+  <text x="600" y="92" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="30" fill="#9d174d" font-weight="700" opacity="0.55">cool. calm. reviewing.</text>
+</svg>

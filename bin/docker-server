@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# prsnooze docker-server — convenience wrapper around docker compose.
+#
+# Subcommands:
+#   start          build (if needed) + start container in background
+#   stop           stop the container
+#   restart        restart without rebuild
+#   rebuild        rebuild image and recreate container (--force-recreate)
+#   ssh            drop into a shell inside the container (alias: shell)
+#   claude-login   run `claude` interactively to log in (auth persists)
+#   gh-login       run `gh auth login` to authenticate GitHub
+#   logs           tail container logs (Ctrl-C to detach)
+#   status         show container status
+#   url            print the URL the server is reachable at
+#   help           show this help (default)
+#
+# All state lives in named docker volumes (prsnooze-claude, prsnooze-gh,
+# prsnooze-data) so rebuilding the image does NOT erase your auth.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+CONTAINER=prsnooze
+
+# colors
+ORG=$'\033[38;5;208m'; RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'
+DIM=$'\033[2m'; BOLD=$'\033[1m'; RST=$'\033[0m'
+
+banner() {
+  printf '\n%s%s     👀  prsnooze (docker)%s\n%s     PR reviews that happen while you sleep%s\n\n' \
+    "$ORG" "$BOLD" "$RST" "$DIM" "$RST"
+}
+
+warning() {
+  printf '%s%s⚠️  WARNING — read this before exposing the URL ⚠️%s\n' "$YEL" "$BOLD" "$RST"
+  printf '  prsnooze runs %sclaude --dangerously-skip-permissions%s. Claude\n' "$BOLD" "$RST"
+  printf '  has full file/network/tool access in the worktree without\n'
+  printf '  confirmation prompts.\n\n'
+  printf '  - Anyone who can reach the URL can trigger a Claude session.\n'
+  printf '  - Use a %sfine-grained GitHub PAT%s scoped to read PRs and write\n' "$BOLD" "$RST"
+  printf '    review comments on the repos you actually want reviewed.\n'
+  printf '    Avoid classic "all-repos admin" tokens.\n'
+  printf '  - Do NOT expose to the public internet without auth (LAN/Tailscale).\n'
+  printf '  - Run on a machine you don'\''t mind seeing networked actions from.\n\n'
+  printf '  %sUse at your own risk.%s\n\n' "$BOLD" "$RST"
+}
+
+ensure_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    printf '%sdocker not found on PATH.%s Install Docker Desktop or docker engine first.\n' "$RED" "$RST" >&2
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    printf '%sdocker compose v2 not available.%s Install Docker Desktop ≥ 4 or the compose plugin.\n' "$RED" "$RST" >&2
+    exit 1
+  fi
+}
+
+ensure_running() {
+  if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    printf '%scontainer %s is not running.%s start it first: %sbin/docker-server start%s\n' \
+      "$RED" "$CONTAINER" "$RST" "$BOLD" "$RST" >&2
+    exit 1
+  fi
+}
+
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+  start)
+    ensure_docker
+    banner
+    warning
+    docker compose up -d --build
+    printf '\n%sup.%s URL: %shttp://localhost:%s%s\n' "$GRN" "$RST" "$BOLD" "${PORT:-8284}" "$RST"
+    printf '%sFirst time?%s run:\n' "$YEL" "$RST"
+    printf '  bin/docker-server claude-login\n'
+    printf '  bin/docker-server gh-login\n'
+    ;;
+  stop)
+    ensure_docker
+    docker compose down
+    ;;
+  restart)
+    ensure_docker
+    docker compose restart
+    ;;
+  rebuild)
+    ensure_docker
+    banner
+    warning
+    docker compose up -d --build --force-recreate
+    ;;
+  ssh|shell)
+    ensure_docker
+    ensure_running
+    printf '%sdropping into shell as user prsnooze. type `exit` to leave.%s\n' "$DIM" "$RST"
+    docker exec -it "$CONTAINER" bash
+    ;;
+  claude-login)
+    ensure_docker
+    ensure_running
+    printf '%sstarting claude interactively. complete the login flow, then `/quit` or Ctrl-D.%s\n' "$DIM" "$RST"
+    docker exec -it "$CONTAINER" claude
+    ;;
+  gh-login)
+    ensure_docker
+    ensure_running
+    printf '%sstarting gh auth login. pick GitHub.com → HTTPS → "Authenticate with a web browser".%s\n' "$DIM" "$RST"
+    printf '%snote: a fine-grained PAT scoped to the repos you want reviewed is the safest choice.%s\n' "$YEL" "$RST"
+    docker exec -it "$CONTAINER" gh auth login
+    ;;
+  logs)
+    ensure_docker
+    docker compose logs -f
+    ;;
+  status)
+    ensure_docker
+    docker compose ps
+    ;;
+  url)
+    printf 'http://localhost:%s\n' "${PORT:-8284}"
+    ;;
+  help|-h|--help|"")
+    banner
+    cat <<EOF
+${BOLD}usage:${RST} bin/docker-server <command>
+
+${BOLD}lifecycle${RST}
+  ${GRN}start${RST}          build (if needed) + start container in background
+  ${GRN}stop${RST}           stop the container
+  ${GRN}restart${RST}        restart without rebuild
+  ${GRN}rebuild${RST}        rebuild image and recreate container
+
+${BOLD}auth (run inside the container)${RST}
+  ${GRN}claude-login${RST}   run \`claude\` interactively to log in
+  ${GRN}gh-login${RST}       run \`gh auth login\` (use a fine-grained PAT)
+
+${BOLD}observability / shell${RST}
+  ${GRN}ssh${RST} | shell    drop into a bash shell inside the container
+  ${GRN}logs${RST}           tail container logs
+  ${GRN}status${RST}         show container status
+  ${GRN}url${RST}            print the listen URL
+
+${DIM}auth + data persist in named volumes (prsnooze-claude, prsnooze-gh,
+prsnooze-data) and survive rebuilds. To wipe, run:
+  docker volume rm prsnooze-claude prsnooze-gh prsnooze-data${RST}
+EOF
+    ;;
+  *)
+    printf '%sunknown command:%s %s\n\n' "$RED" "$RST" "$CMD" >&2
+    exec "$0" help
+    ;;
+esac

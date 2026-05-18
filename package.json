@@ -1,0 +1,31 @@
+{
+  "name": "prsnooze",
+  "version": "0.1.0",
+  "description": "prsnooze — PR reviews that happen while you sleep. Teammates paste a GitHub PR URL; the host runs Claude Code headlessly with your project's review skill and posts the review back to the PR.",
+  "main": "server.js",
+  "type": "commonjs",
+  "bin": {
+    "prsnooze": "bin/start.js"
+  },
+  "scripts": {
+    "start": "node bin/start.js",
+    "check": "node bin/start.js --check",
+    "start:nochecks": "node bin/start.js --no-check",
+    "docker:start": "bin/docker-server start",
+    "docker:stop": "bin/docker-server stop",
+    "docker:restart": "bin/docker-server restart",
+    "docker:rebuild": "bin/docker-server rebuild",
+    "docker:ssh": "bin/docker-server ssh",
+    "docker:claude-login": "bin/docker-server claude-login",
+    "docker:gh-login": "bin/docker-server gh-login",
+    "docker:logs": "bin/docker-server logs",
+    "docker:status": "bin/docker-server status"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "uuid": "^11.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

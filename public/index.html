@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>prsnooze — your PR gets reviewed while you sleep</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">👀</span>
+        <div>
+          <h1>prsnooze</h1>
+          <p class="tagline">You snooze. We review. Drop a PR URL below.</p>
+        </div>
+      </div>
+      <div id="queue-status" class="queue-status"></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <img
+          class="hero-img"
+          src="/heroes/sleepy-cat.svg"
+          alt="A sleepy mascot for prsnooze"
+        />
+        <div class="hero-overlay">
+          <h2>Do not disturb.</h2>
+          <p>
+            Whoever runs this prsnooze instance is <em>probably asleep</em>. The bot
+            isn't. Paste a PR URL below — it'll review the PR and post comments
+            before anyone wakes up.
+          </p>
+          <p class="hero-fineprint">
+            (the hero image is a placeholder — set <code>HERO_IMAGE</code> in <code>.env</code> to swap.)
+          </p>
+        </div>
+      </section>
+
+      <section class="submit">
+        <form id="submit-form">
+          <input
+            id="pr-url"
+            type="url"
+            name="prUrl"
+            placeholder="https://github.com/owner/repo/pull/123"
+            autocomplete="off"
+            required
+          />
+          <button id="submit-btn" type="submit">Review</button>
+        </form>
+        <div id="submit-msg" class="submit-msg"></div>
+      </section>
+
+      <section class="active" id="active-section" hidden>
+        <div class="active-head">
+          <h2 id="active-title">Active review</h2>
+          <span id="active-state" class="badge">queued</span>
+        </div>
+        <div id="active-meta" class="active-meta"></div>
+        <ol id="active-log" class="log"></ol>
+      </section>
+
+      <section class="recent">
+        <h2>Recent reviews</h2>
+        <ul id="recent-list" class="recent-list">
+          <li class="empty">No reviews yet.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

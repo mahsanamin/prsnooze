@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="catBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e1b4b"/>
+      <stop offset="1" stop-color="#0f1115"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="500" fill="url(#catBg)"/>
+  <g fill="#fef3c7">
+    <circle cx="80" cy="80" r="2"/>
+    <circle cx="220" cy="60" r="1.5"/>
+    <circle cx="370" cy="100" r="2"/>
+    <circle cx="510" cy="55" r="1.5"/>
+    <circle cx="780" cy="80" r="2.5"/>
+    <circle cx="930" cy="40" r="2"/>
+    <circle cx="1080" cy="90" r="1.5"/>
+    <circle cx="1140" cy="170" r="2"/>
+    <circle cx="60" cy="180" r="1.5"/>
+    <circle cx="320" cy="200" r="1"/>
+  </g>
+  <g fill="#fde68a">
+    <path d="M 250 150 L 252 160 L 262 162 L 252 164 L 250 174 L 248 164 L 238 162 L 248 160 Z"/>
+    <path d="M 950 150 L 952 158 L 960 160 L 952 162 L 950 170 L 948 162 L 940 160 L 948 158 Z"/>
+  </g>
+  <ellipse cx="600" cy="450" rx="320" ry="14" fill="#000" opacity="0.4"/>
+  <!-- Cat body curled -->
+  <ellipse cx="610" cy="400" rx="200" ry="80" fill="#f97316"/>
+  <ellipse cx="610" cy="395" rx="180" ry="65" fill="#fb923c"/>
+  <!-- Tail wrapping -->
+  <path d="M 770 410 Q 830 420, 830 360 Q 800 340, 760 370" fill="#f97316"/>
+  <path d="M 770 408 Q 822 418, 822 365 Q 798 348, 765 372" fill="#fb923c"/>
+  <!-- Head -->
+  <ellipse cx="450" cy="380" rx="65" ry="58" fill="#f97316"/>
+  <ellipse cx="450" cy="378" rx="58" ry="50" fill="#fb923c"/>
+  <!-- Ears -->
+  <polygon points="408,338 408,288 442,328" fill="#f97316"/>
+  <polygon points="492,338 492,288 458,328" fill="#f97316"/>
+  <polygon points="416,335 416,308 432,328" fill="#fda4af"/>
+  <polygon points="484,335 484,308 468,328" fill="#fda4af"/>
+  <!-- Closed sleeping eye -->
+  <path d="M 425 380 Q 437 388, 449 380" stroke="#1f2937" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- Nose -->
+  <polygon points="450,395 442,402 458,402" fill="#fda4af"/>
+  <!-- Mouth -->
+  <path d="M 450 405 Q 446 412, 442 408" stroke="#1f2937" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M 450 405 Q 454 412, 458 408" stroke="#1f2937" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- Whiskers -->
+  <g stroke="#fef3c7" stroke-width="1.4" stroke-linecap="round" opacity="0.85">
+    <line x1="408" y1="395" x2="378" y2="392"/>
+    <line x1="408" y1="403" x2="378" y2="406"/>
+    <line x1="492" y1="395" x2="522" y2="392"/>
+    <line x1="492" y1="403" x2="522" y2="406"/>
+  </g>
+  <!-- Z's floating -->
+  <g fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="700">
+    <text x="540" y="290" font-size="34" opacity="0.95">z</text>
+    <text x="572" y="240" font-size="44" opacity="0.7">z</text>
+    <text x="612" y="180" font-size="56" opacity="0.5">Z</text>
+  </g>
+</svg>

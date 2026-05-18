@@ -1,0 +1,26 @@
+services:
+  prsnooze:
+    build: .
+    image: prsnooze:latest
+    container_name: prsnooze
+    ports:
+      - "${PORT:-8284}:8284"
+    environment:
+      PORT: "8284"
+      PRSNOOZE_HOME: "/home/prsnooze/.prsnooze"
+      HERO_IMAGE: "${HERO_IMAGE:-/heroes/sleepy-cat.svg}"
+      KEEP_WORKTREES_ON_SUCCESS: "${KEEP_WORKTREES_ON_SUCCESS:-false}"
+    volumes:
+      # Persist Claude Code auth across rebuilds
+      - prsnooze-claude:/home/prsnooze/.claude
+      # Persist gh auth (token + config)
+      - prsnooze-gh:/home/prsnooze/.config/gh
+      # Persist data (clones, worktrees, jobs)
+      - prsnooze-data:/home/prsnooze/.prsnooze
+    restart: unless-stopped
+    init: true
+
+volumes:
+  prsnooze-claude:
+  prsnooze-gh:
+  prsnooze-data:

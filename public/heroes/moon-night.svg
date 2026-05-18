@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="moonBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0c1834"/>
+      <stop offset="0.55" stop-color="#1e1b4b"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="500" fill="url(#moonBg)"/>
+  <!-- Tiny stars -->
+  <g fill="#fef3c7">
+    <circle cx="80" cy="60" r="1.5"/>
+    <circle cx="180" cy="100" r="1"/>
+    <circle cx="290" cy="40" r="2"/>
+    <circle cx="380" cy="120" r="1.4"/>
+    <circle cx="490" cy="60" r="1"/>
+    <circle cx="610" cy="90" r="1.3"/>
+    <circle cx="700" cy="50" r="1.5"/>
+    <circle cx="810" cy="120" r="1"/>
+    <circle cx="1050" cy="100" r="1.2"/>
+    <circle cx="1150" cy="80" r="1.5"/>
+    <circle cx="100" cy="180" r="1"/>
+    <circle cx="350" cy="200" r="1.4"/>
+    <circle cx="500" cy="220" r="1"/>
+    <circle cx="900" cy="220" r="1"/>
+    <circle cx="1100" cy="190" r="1.2"/>
+  </g>
+  <!-- Sparkle 4-pointers -->
+  <g fill="#fef3c7">
+    <path d="M 250 150 L 252 160 L 262 162 L 252 164 L 250 174 L 248 164 L 238 162 L 248 160 Z"/>
+    <path d="M 1050 200 L 1052 208 L 1060 210 L 1052 212 L 1050 220 L 1048 212 L 1040 210 L 1048 208 Z"/>
+    <path d="M 600 260 L 601 266 L 607 268 L 601 270 L 600 276 L 599 270 L 593 268 L 599 266 Z"/>
+  </g>
+  <!-- Crescent moon w/ face -->
+  <g transform="translate(900, 190)">
+    <circle cx="0" cy="0" r="80" fill="#fde68a"/>
+    <circle cx="28" cy="-15" r="74" fill="#1e1b4b"/>
+    <path d="M -34 -10 Q -25 -2, -16 -10" stroke="#92400e" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+    <path d="M -8 -8 Q 0 0, 8 -8" stroke="#92400e" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+    <path d="M -26 22 Q -10 34, 6 22" stroke="#92400e" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+    <circle cx="-30" cy="6" r="3" fill="#fbbf24" opacity="0.9"/>
+    <circle cx="14" cy="6" r="3" fill="#fbbf24" opacity="0.9"/>
+  </g>
+  <!-- Soft clouds -->
+  <g fill="#475569" opacity="0.55">
+    <ellipse cx="200" cy="320" rx="80" ry="20"/>
+    <ellipse cx="240" cy="310" rx="50" ry="18"/>
+    <ellipse cx="170" cy="316" rx="40" ry="15"/>
+    <ellipse cx="600" cy="380" rx="100" ry="22"/>
+    <ellipse cx="650" cy="368" rx="60" ry="20"/>
+    <ellipse cx="560" cy="376" rx="50" ry="18"/>
+  </g>
+  <!-- Hilly ground silhouette -->
+  <path d="M 0 470 L 0 500 L 1200 500 L 1200 460 Q 1100 440, 1000 462 Q 900 482, 800 458 Q 700 438, 600 462 Q 500 482, 400 458 Q 300 438, 200 462 Q 100 482, 0 470 Z" fill="#0c0a1e"/>
+  <!-- Two cypress-like silhouettes -->
+  <g fill="#0c0a1e">
+    <path d="M 300 470 L 295 410 Q 300 395, 305 410 Z"/>
+    <ellipse cx="300" cy="408" rx="14" ry="32"/>
+    <path d="M 800 470 L 794 405 Q 800 388, 806 405 Z"/>
+    <ellipse cx="800" cy="402" rx="16" ry="38"/>
+  </g>
+</svg>

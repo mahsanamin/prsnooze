@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+
+# local config
+.env
+.env.local
+
+# runtime data — only relevant if user overrides defaults to project-local paths;
+# default data dir is ~/.prsnooze/, which is out of the repo.
+repos/
+worktrees/
+outputs/
+*.log
+*.pid
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# claude per-machine local overrides (project-level skills/rules ARE checked in,
+# but personal local settings are not)
+.claude/settings.local.json
+
+# Per-deployment hero image (each operator drops their own — not in git).
+# The bundled SVG defaults in public/heroes/ ARE checked in.
+public/heroes/local-hero.*
