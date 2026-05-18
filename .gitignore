@@ -5,11 +5,7 @@ node_modules/
 .env
 .env.local
 
-# runtime data — only relevant if user overrides defaults to project-local paths;
-# default data dir is ~/.prsnooze/, which is out of the repo.
-repos/
-worktrees/
-outputs/
+# logs and pidfiles (rare, but ignore if anything writes them at root)
 *.log
 *.pid
 
