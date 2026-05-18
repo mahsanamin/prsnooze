@@ -251,6 +251,7 @@ main {
 .log .kind-worktree_ready { color: var(--blue); }
 .log .kind-skill_resolved { color: var(--green); }
 .log .kind-skill_missing { color: var(--yellow); }
+.log .kind-approval_policy { color: var(--blue); }
 .log .kind-tool_use { color: var(--yellow); }
 .log .kind-tool_result { color: var(--muted); }
 .log .kind-assistant_text { color: var(--text); }

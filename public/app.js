@@ -170,6 +170,17 @@ function appendLog(ev) {
           (ev.attempted || []).join("\n"),
         )}</pre></details>`;
       break;
+    case "approval_policy": {
+      const verdict = !ev.autoApprove
+        ? "disabled"
+        : ev.sizeOk
+          ? "eligible"
+          : "blocked (size)";
+      body =
+        `<strong>auto-approve: ${escapeHtml(verdict)}</strong> ` +
+        `<span>${escapeHtml(ev.reason || "")}</span>`;
+      break;
+    }
     case "system":
       body = `claude session ${(ev.sessionId || "").slice(0, 8)} model=${ev.model || "?"}`;
       break;

@@ -145,7 +145,29 @@ Defaults are in `.env.example`. Anything in `.env` overrides them.
 | `OUTPUTS_DIR` | `$PRSNOOZE_HOME/outputs` | Where job state is persisted |
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | If `true`, keep worktrees after a successful review |
 | `CLAUDE_BIN` | `claude` | Path to the claude CLI |
+| `AUTO_APPROVE` | `true` | If `true`, the reviewer **approves** PRs that are small, clean, and low-risk (no critical/major issues AND none of the criticality red flags — see below). Otherwise the review is posted via `--comment`. |
+| `AUTO_APPROVE_MAX_LINES` | `100` | PRs with more than this many `additions + deletions` are never auto-approved (review-only), regardless of severity. |
+| `AUTO_APPROVE_MAX_FILES` | `5` | Same idea but for `changedFiles`. |
 | `HERO_IMAGE` | `/heroes/sleepy-cat.svg` | Landscape image on the home page (path or URL) |
+
+### How auto-approval decides
+
+Auto-approve fires (`gh pr review --approve`) only when **all** of the following hold:
+
+1. `AUTO_APPROVE=true` in your config.
+2. The PR is small: `additions + deletions ≤ AUTO_APPROVE_MAX_LINES` **and** `changedFiles ≤ AUTO_APPROVE_MAX_FILES`. (Server-side hard guard — the reviewer is told "don't approve" if either cap is exceeded, regardless of what it finds.)
+3. The reviewer found no critical and no major issues.
+4. The reviewer sees **none** of these criticality red flags in the diff:
+   - auth / authn / authz / sessions / tokens / credentials
+   - payments / billing / money handling
+   - DB schema, migrations, data-shape changes
+   - CI/CD, build scripts, deployment configs
+   - public-API removal or signature change
+   - non-trivial refactor that changes call-site behavior
+   - adding, removing, or version-bumping a dependency
+   - anything where regression risk can't be bounded from the diff
+
+If any of the above fails, the review is still posted — just as `--comment`, not `--approve`. The web UI shows whether auto-approval was eligible, blocked by size, or disabled.
 
 ### Customizing the hero image
 

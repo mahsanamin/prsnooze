@@ -27,6 +27,9 @@ const JOBS_DIR = path.join(OUTPUTS_DIR, "jobs");
 const KEEP_WORKTREE_ON_SUCCESS = String(process.env.KEEP_WORKTREES_ON_SUCCESS || "false") === "true";
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const HERO_IMAGE = process.env.HERO_IMAGE || "/heroes/sleepy-cat.svg";
+const AUTO_APPROVE = String(process.env.AUTO_APPROVE ?? "true") === "true";
+const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "100", 10);
+const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
 
 for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
   fs.mkdirSync(d, { recursive: true });
@@ -73,6 +76,9 @@ const queue = new Queue((job, helpers) =>
     worktreesDir: WORKTREES_DIR,
     claudeBin: CLAUDE_BIN,
     keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
+    autoApprove: AUTO_APPROVE,
+    autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
+    autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
   }),
 );
 
@@ -191,6 +197,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  outputs:   ${OUTPUTS_DIR}`);
   console.log(`  claude:    ${CLAUDE_BIN}`);
   console.log(`  keep wt on success: ${KEEP_WORKTREE_ON_SUCCESS}`);
+  console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
 });
 
 // --- helpers ---
