@@ -30,6 +30,8 @@ const HERO_IMAGE = process.env.HERO_IMAGE || "/heroes/sleepy-cat.svg";
 const AUTO_APPROVE = String(process.env.AUTO_APPROVE ?? "true") === "true";
 const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "100", 10);
 const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
+const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
+const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? "true") === "true";
 
 for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
   fs.mkdirSync(d, { recursive: true });
@@ -54,6 +56,12 @@ function pushEvent(jobId, event) {
   if (event.kind === "worktree_ready") job.worktreePath = event.path;
   if (event.kind === "summary") job.summary = event;
   if (event.kind === "failed") job.error = event.error;
+  if (event.kind === "outcome_detected") job.outcome = event.outcome;
+  if (event.kind === "skipped") {
+    job.skipped = true;
+    job.skipReason = event.reason;
+    job.outcome = event.outcome || null;
+  }
   for (const res of subscribers.get(jobId) || []) {
     sendSse(res, event);
   }
@@ -79,6 +87,8 @@ const queue = new Queue((job, helpers) =>
     autoApprove: AUTO_APPROVE,
     autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
     autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
+    confidenceThreshold: CONFIDENCE_THRESHOLD,
+    skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
   }),
 );
 
@@ -138,6 +148,9 @@ app.get("/api/jobs", (_req, res) => {
       prUrl: j.prUrl,
       state: j.state,
       phase: j.phase,
+      outcome: j.outcome || null,         // "approved" | "commented" | "changes_requested" | null
+      skipped: !!j.skipped,
+      skipReason: j.skipReason || null,
       title: j.prMeta?.title,
       number: j.prMeta?.number,
       nameWithOwner: j.prMeta?.nameWithOwner,
@@ -198,6 +211,8 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  claude:    ${CLAUDE_BIN}`);
   console.log(`  keep wt on success: ${KEEP_WORKTREE_ON_SUCCESS}`);
   console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
+  console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
+  console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
 });
 
 // --- helpers ---

@@ -252,6 +252,22 @@ main {
 .log .kind-skill_resolved { color: var(--green); }
 .log .kind-skill_missing { color: var(--yellow); }
 .log .kind-approval_policy { color: var(--blue); }
+.log .kind-outcome_detected { color: var(--green); font-weight: 600; }
+.log .kind-skipped { color: var(--yellow); font-weight: 600; }
+
+/* Outcome badges in the recent-jobs list */
+.badge.outcome-approved {
+  background: rgba(34, 197, 94, 0.18);
+  color: var(--green);
+}
+.badge.outcome-commented {
+  background: rgba(96, 165, 250, 0.18);
+  color: var(--blue);
+}
+.badge.outcome-changes_requested {
+  background: rgba(234, 179, 8, 0.18);
+  color: var(--yellow);
+}
 .log .kind-tool_use { color: var(--yellow); }
 .log .kind-tool_result { color: var(--muted); }
 .log .kind-assistant_text { color: var(--text); }

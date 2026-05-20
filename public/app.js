@@ -56,6 +56,7 @@ function openJob(jobId) {
     currentEs = null;
   }
   currentJobId = jobId;
+  activeOutcome = null;
   activeSection.hidden = false;
   activeTitle.textContent = `Review ${jobId.slice(0, 8)}`;
   activeState.textContent = "queued";
@@ -91,21 +92,51 @@ function handleEvent(ev) {
   } else if (ev.kind === "pr_meta") {
     renderPrMeta(ev);
   } else if (ev.kind === "done") {
-    setState("done");
+    setState("done", null, activeOutcome);
     refreshRecent();
   } else if (ev.kind === "failed") {
     setState("failed");
     refreshRecent();
   } else if (ev.kind === "stream_end") {
-    setState(ev.state);
+    setState(ev.state, null, activeOutcome);
   } else if (ev.kind === "summary") {
     renderSummary(ev);
+  } else if (ev.kind === "outcome_detected") {
+    activeOutcome = ev.outcome;
+    setState("running", null, activeOutcome);
+  } else if (ev.kind === "skipped") {
+    activeOutcome = ev.outcome || "skipped";
+    setState("done", `skipped (${ev.reason})`, activeOutcome);
   }
 }
 
-function setState(state, phase) {
-  activeState.textContent = phase ? `${state} · ${phase}` : state;
+let activeOutcome = null;
+
+function setState(state, phase, outcome) {
+  let text = state;
+  if (phase) text = `${state} · ${phase}`;
+  if (outcome) text = `${text} · ${outcomeLabel(outcome)}`;
+  activeState.textContent = text;
   activeState.className = `badge ${state}`;
+}
+
+function outcomeLabel(o) {
+  switch (o) {
+    case "approved": return "✓ approved";
+    case "changes_requested": return "⚠ changes requested";
+    case "commented": return "💬 commented";
+    case "skipped": return "↪ skipped";
+    default: return o || "";
+  }
+}
+
+function outcomeBadge(j) {
+  if (!j.outcome) return "";
+  const o = j.outcome;
+  const cls = o === "approved" ? "approved"
+    : o === "changes_requested" ? "changes_requested"
+    : "commented";
+  return `<span class="badge outcome-${cls}">${escapeHtml(outcomeLabel(o))}</span> `;
 }
 
 function renderPrMeta(ev) {
@@ -191,6 +222,14 @@ function appendLog(ev) {
         `<span>${escapeHtml(ev.reason || "")}</span>`;
       break;
     }
+    case "outcome_detected":
+      body = `<strong>${escapeHtml(outcomeLabel(ev.outcome))}</strong>`;
+      break;
+    case "skipped":
+      body =
+        `<strong>skipped: ${escapeHtml(ev.reason || "")}</strong> ` +
+        `<span>${escapeHtml(ev.detail || "")}</span>`;
+      break;
     case "system":
       body = `claude session ${(ev.sessionId || "").slice(0, 8)} model=${ev.model || "?"}`;
       break;
@@ -299,7 +338,7 @@ function renderRecent(list) {
     });
     const right = document.createElement("span");
     right.className = "recent-meta";
-    right.innerHTML = `<span class="badge ${j.state}">${j.state}</span>`;
+    right.innerHTML = `${outcomeBadge(j)}<span class="badge ${j.state}">${j.state}</span>`;
     li.appendChild(left);
     li.appendChild(right);
     recentList.appendChild(li);

@@ -148,6 +148,8 @@ Defaults are in `.env.example`. Anything in `.env` overrides them.
 | `AUTO_APPROVE` | `true` | If `true`, the reviewer **approves** PRs that are small, clean, and low-risk (no critical/major issues AND none of the criticality red flags — see below). Otherwise the review is posted via `--comment`. |
 | `AUTO_APPROVE_MAX_LINES` | `100` | Max **production** lines (`additions + deletions`, test files excluded). Over this → review-only. |
 | `AUTO_APPROVE_MAX_FILES` | `5` | Max **production** files changed. Over this → review-only. |
+| `CONFIDENCE_THRESHOLD` | `80` | Default noise filter — findings below this confidence are dropped. **The project's review skill takes precedence**: if the inlined skill defines its own filter, that wins. Set `0` to disable. |
+| `SKIP_IF_ALREADY_REVIEWED` | `true` | If your gh user already posted a review on the same commit SHA, skip without spawning Claude. Prevents accidental double-reviews on resubmits. |
 | `HERO_IMAGE` | `/heroes/sleepy-cat.svg` | Landscape image on the home page (path or URL) |
 
 ### How auto-approval decides
