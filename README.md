@@ -146,8 +146,8 @@ Defaults are in `.env.example`. Anything in `.env` overrides them.
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | If `true`, keep worktrees after a successful review |
 | `CLAUDE_BIN` | `claude` | Path to the claude CLI |
 | `AUTO_APPROVE` | `true` | If `true`, the reviewer **approves** PRs that are small, clean, and low-risk (no critical/major issues AND none of the criticality red flags — see below). Otherwise the review is posted via `--comment`. |
-| `AUTO_APPROVE_MAX_LINES` | `100` | PRs with more than this many `additions + deletions` are never auto-approved (review-only), regardless of severity. |
-| `AUTO_APPROVE_MAX_FILES` | `5` | Same idea but for `changedFiles`. |
+| `AUTO_APPROVE_MAX_LINES` | `100` | Max **production** lines (`additions + deletions`, test files excluded). Over this → review-only. |
+| `AUTO_APPROVE_MAX_FILES` | `5` | Max **production** files changed. Over this → review-only. |
 | `HERO_IMAGE` | `/heroes/sleepy-cat.svg` | Landscape image on the home page (path or URL) |
 
 ### How auto-approval decides
@@ -155,7 +155,7 @@ Defaults are in `.env.example`. Anything in `.env` overrides them.
 Auto-approve fires (`gh pr review --approve`) only when **all** of the following hold:
 
 1. `AUTO_APPROVE=true` in your config.
-2. The PR is small: `additions + deletions ≤ AUTO_APPROVE_MAX_LINES` **and** `changedFiles ≤ AUTO_APPROVE_MAX_FILES`. (Server-side hard guard — the reviewer is told "don't approve" if either cap is exceeded, regardless of what it finds.)
+2. The PR is small **in production code**: `prodAdditions + prodDeletions ≤ AUTO_APPROVE_MAX_LINES` **and** `prodFiles ≤ AUTO_APPROVE_MAX_FILES`. Test files are filtered out before the count — see [test-file detection](#test-file-detection). (Server-side hard guard — the reviewer is told "don't approve" if either cap is exceeded, regardless of what it finds.)
 3. The reviewer found no critical and no major issues.
 4. The reviewer sees **none** of these criticality red flags in the diff:
    - auth / authn / authz / sessions / tokens / credentials
@@ -167,7 +167,20 @@ Auto-approve fires (`gh pr review --approve`) only when **all** of the following
    - adding, removing, or version-bumping a dependency
    - anything where regression risk can't be bounded from the diff
 
-If any of the above fails, the review is still posted — just as `--comment`, not `--approve`. The web UI shows whether auto-approval was eligible, blocked by size, or disabled.
+If any of the above fails, the review is still posted — just as `--comment`, not `--approve`. The web UI shows whether auto-approval was eligible, blocked by size, or disabled, plus the prod/test breakdown.
+
+#### Test-file detection
+
+A file is classified as **test code** (and therefore excluded from the size cap) if its path matches any of:
+
+- `tests/`, `test/`, `__tests__/`, `spec/`, `e2e/`, `cypress/`, `integration-tests/`, `src/test/`
+- `*.test.{js,jsx,ts,tsx,mjs,cjs}`, `*.spec.{js,jsx,ts,tsx,mjs,cjs}`
+- `*_test.go`
+- `test_*.py`, `*_test.py`
+- `*_spec.rb`
+- `*Tests.{java,kt,scala,groovy}`, `*Test.{java,kt,scala,groovy}`, `*Spec.{java,kt,scala,groovy}`, `*IntegrationTests.{java,kt,scala,groovy}`
+
+Everything else counts as production code. If your project uses a non-standard test layout, edit `TEST_PATH_PATTERNS` in `lib/github.js`.
 
 ### Customizing the hero image
 
