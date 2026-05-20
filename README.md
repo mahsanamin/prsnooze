@@ -114,7 +114,7 @@ docker volume rm prsnooze-claude prsnooze-gh prsnooze-data
 | `claude` CLI + login | host needs it | bundled, log in via `docker-server claude-login` |
 | `gh` CLI + auth | host needs it | bundled, log in via `docker-server gh-login` |
 | git + SSH | host needs it (SSH for clones) | bundled, but uses HTTPS via gh token |
-| Review skill | `~/.claude/skills/aa-review-pr` (or `review-pr`) | same — persists in the `prsnooze-claude` volume |
+| Review skill | (optional — bundled default used if none) | (optional — bundled default used if none) |
 
 ---
 
@@ -198,6 +198,22 @@ To use **your own**: drop a JPEG/PNG/SVG into `public/heroes/` and point at it (
 
 ---
 
+## Review skills
+
+prsnooze inlines a review skill's body into the prompt at runtime (Claude Code can't dispatch a skill marked `disable-model-invocation: true` via the Skill tool, so dispatch is unreliable; inlining is bulletproof).
+
+Resolution order, first hit wins:
+
+1. `<worktree>/.claude/skills/aa-review-pr/SKILL.md` — project, preferred
+2. `<worktree>/.claude/skills/review-pr/SKILL.md` — project, alternate name
+3. `~/.claude/skills/aa-review-pr/SKILL.md` — your user-level skill
+4. `~/.claude/skills/review-pr/SKILL.md`
+5. **`<prsnooze>/skills/default-review/SKILL.md`** — bundled with this repo. Always present, so this is the floor: every review uses a structured playbook, never a vibes-only "do a thoughtful review."
+
+The web UI's `skill_resolved` event tags the source as `[project]` / `[user]` / `[bundled]` so you can tell at a glance which playbook ran.
+
+The bundled default is designed for headless use: no interactive prompts, severity-tagged findings, explicit "post exactly once" guard, compatible with prsnooze's auto-approve policy. Skim `skills/default-review/SKILL.md` to see what gets inlined. To customize per-project, drop a `aa-review-pr/SKILL.md` into your project's `.claude/skills/`; prsnooze picks it up automatically.
+
 ## Concurrency
 
 One review at a time. Additional submissions queue FIFO. The topbar shows current queue depth.
@@ -223,7 +239,7 @@ One review at a time. Additional submissions queue FIFO. The topbar shows curren
 - **`gh pr view failed`** — run `gh auth status` (or `bin/docker-server ssh` then `gh auth status`).
 - **`Base branch not found on origin`** — the PR's base branch was deleted, or the cached clone is stale. prsnooze fetches before every worktree, so it usually means the branch really is gone.
 - **Claude exits non-zero** — the worktree is preserved at `~/.prsnooze/worktrees/<jobId>` (or in the container at `/home/prsnooze/.prsnooze/worktrees/<jobId>`). `cd` in and run `claude` interactively to reproduce.
-- **Skill not picked up** — confirm `aa-review-pr` (or `review-pr`) is in `~/.claude/skills/` (user level) or the project's `.claude/skills/`. The prompt names both.
+- **Review feels generic** — prsnooze searches for a project-level `aa-review-pr` or `review-pr` skill in the worktree's `.claude/skills/`, then at `~/.claude/skills/`, then falls back to the bundled `skills/default-review/SKILL.md` in this repo. The web UI's `skill_resolved` event shows which one was used (`[project]` / `[user]` / `[bundled]`). For project-specific review rubrics, add an `aa-review-pr/SKILL.md` to your project — prsnooze inlines its body into the prompt.
 
 ## Roadmap
 

@@ -158,11 +158,21 @@ function appendLog(ev) {
     case "worktree_ready":
       body = ev.path;
       break;
-    case "skill_resolved":
+    case "skill_resolved": {
+      const tag =
+        ev.source === "project"
+          ? "[project]"
+          : ev.source === "user"
+            ? "[user]"
+            : ev.source === "bundled"
+              ? "[bundled]"
+              : "";
       body =
         `<strong>${escapeHtml(ev.name || "")}</strong> ` +
+        `<span>${escapeHtml(tag)}</span> ` +
         `<span>${escapeHtml(ev.pathDisplay || ev.path || "")}</span>`;
       break;
+    }
     case "skill_missing":
       body =
         `<strong>no project review skill found</strong> — doing a generic review. ` +
