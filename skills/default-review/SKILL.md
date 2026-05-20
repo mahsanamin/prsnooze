@@ -1,145 +1,132 @@
 ---
 name: prsnooze-default-review
-description: Default PR-review playbook bundled with prsnooze. Used when the project being reviewed has no `aa-review-pr` / `review-pr` skill at the project or user level. Language-agnostic; respects whatever project conventions it finds.
+description: Default PR-review playbook bundled with prsnooze. Produces tight, actionable, file:line-anchored findings — no prose, no duplicates, no review-meta. Used when the project being reviewed has no `aa-review-pr` / `review-pr` skill of its own.
 ---
 
-# Default PR review (prsnooze)
+# Default PR review (prsnooze) — tight, actionable, dedup'd
 
-A pragmatic, language-agnostic PR review playbook. You're running headlessly: no user, no interactive prompts. Execute every step in order.
+You're reviewing a PR headlessly. Output **only** actionable findings, each anchored to `file:line`, each with a concrete fix. No prose, no intros, no "deliberately didn't flag", no "verdict" essays, no review-meta lines.
 
 ## Inputs
 
-- A GitHub PR URL is in the enclosing prompt.
-- Current working directory is a fresh git worktree of the PR's base branch.
+- PR URL is in the enclosing prompt
+- Current directory = fresh worktree of the PR's base branch
+- `gh` CLI authenticated
 
 ## Steps
 
-### 1. Read the diff and the PR description
+### 1. Read the PR
 
 ```sh
-gh pr view  <N> --json title,body,baseRefName,headRefName,files,additions,deletions
-gh pr diff  <N>
+gh pr view <N> --json title,body,files,additions,deletions,reviews,comments,headRefOid
+gh pr diff <N>
 ```
 
-Read the title and description carefully — the description is the author's claim about what the PR does. Most of the review consists of checking that the diff matches that claim.
+### 2. Dedup against prior reviews — DO THIS BEFORE THINKING
 
-### 2. Discover project conventions
+Read every prior:
+- **review body** from the `reviews` array (each has `body`, `state`, `commit.oid`, `author.login`)
+- **PR-level comment** from the `comments` array (the conversation tab)
+- **inline line-anchored comment** via `gh api repos/{owner}/{repo}/pulls/<N>/comments` (each has `path`, `line`, `body`, `user.login`)
+- *(optional, for resolved-thread detection)*: GraphQL query for `reviewThreads { isResolved }`
 
-Look (in this order) for anything that constrains style/architecture:
+Catalog every concern that's been raised: paths, line numbers, paraphrased issues, code snippets cited. If a thread is **resolved**, the issue was addressed — treat it as fully closed.
 
-- `CLAUDE.md` and `AGENTS.md` at repo root or under `.claude/`
-- `.claude/settings.json` (allowed/denied tools, per-project)
-- `CONTRIBUTING.md`, `README.md`
-- Language-specific config: `.editorconfig`, `pyproject.toml`, `package.json` scripts, `Makefile`, `build.gradle`
+**You will NOT re-raise anything already there — not even with different wording.** Same concern + different phrasing = a duplicate. Drop it.
 
-**Project conventions outrank generic best practices.** If `CLAUDE.md` says "we use snake_case for module-level constants," don't flag camelCase as a finding here — that's not a defect in this project's frame.
+If every concern you'd raise is already covered, the output is exactly this single line:
 
-### 3. Read the touched files in full
+```
+No new issues found beyond the existing reviews.
+```
 
-For each non-trivial file in `files[]`, read it (not just the hunks). Diffs lie — surrounding code can change a change's meaning. Skip giant generated files (lockfiles, snapshots).
+…and you stop. That single line is the review body. Nothing else, no prose, no padding.
 
-### 4. Apply the universal checklist
+### 3. Honor project conventions
 
-Walk the diff with each lens in turn.
+Look for `CLAUDE.md`, `AGENTS.md`, `.claude/`, `CONTRIBUTING.md`. If they exist, follow them. They outrank generic best practices.
 
-**Correctness**
-- Does the code do what the PR description claims?
-- Edge cases: null/undefined/empty, off-by-one, zero items, integer overflow
-- Error handling: caught, propagated, or silently swallowed?
-- Concurrency: shared state mutated safely? Races possible?
+### 4. Read touched files in full
 
-**Security**
-- Hardcoded secrets (tokens, keys, credentials) — even in tests
-- Injection: SQL, command, log, XSS, path traversal, SSRF
-- Auth / authz changes — who can now do what they couldn't before?
-- Sensitive data in logs, error messages, telemetry, URLs
-- Cryptography: rolled-your-own vs library; weak algorithms
+For each non-trivial changed file, open it (not just the hunks — context matters). Skip generated files (lockfiles, snapshots, autogen output).
 
-**Regressions**
-- Removed behavior callers may still depend on
-- Public-API contract changes (signature, return type, error semantics)
-- Default values that flipped meaning
+### 5. Walk the checklist
 
-**Observability**
-- New failure modes have logs / metrics
-- Error messages help an on-call human (include context, not just "failed")
+- **Correctness** — does the code do what the PR claims? edge cases? null/empty? error handling? concurrency?
+- **Security** — secrets, injection (SQL/command/log/XSS/path), auth/authz changes, sensitive data in logs, weak crypto
+- **Regressions** — removed behavior callers depend on? public-API contract changes? flipped defaults?
+- **Observability** — new failure modes have logs/metrics? error messages include context?
+- **Tests** — new behavior tested? edge cases covered? no silenced/skipped tests slipped in?
+- **Performance** — quadratic loops, N+1, hot-path allocations
+- **Dead code** — leftover prints, commented-out blocks, unused imports
 
-**Tests**
-- New behavior has tests
-- Tests verify behavior, not implementation details
-- Edge cases and failure paths covered, not just the happy path
-- Existing tests still pass conceptually (no `@Ignore` / `it.skip` slipped in)
+### 6. Severity
 
-**Performance**
-- Quadratic loops where linear suffices
-- N+1 queries in a request path
-- Unnecessary allocations or copies in hot paths
+🔴 critical · 🟠 major · 🟡 minor · ⚪ nit
 
-**Clarity**
-- Names match purpose; magic values extracted to constants
-- Comments explain WHY (non-obvious constraints / decisions), never WHAT
-- Dead code, commented-out blocks, debug prints removed
+**Drop all ⚪ nits.** Surface 🟡 minor only if the PR is small (≤ 50 prod lines) AND there are no major/critical findings. Otherwise minor is noise.
 
-### 5. Tag every finding by severity
+### 7. Write the body — STRICT format
 
-- 🔴 **Critical** — incidents, data loss, security holes
-- 🟠 **Major** — correctness gap, regression risk, missing test coverage of a meaningful path, breaking change without migration
-- 🟡 **Minor** — small bug unlikely to fire, redundant code, missing-but-non-critical log
-- ⚪ **Nit** — naming, formatting, comment style
-
-Use the *lowest* applicable severity. Inflated severity is noise.
-
-### 6. Write the review body
-
-Structure:
+Exactly this structure. Skip a section entirely if it has no findings. No other sections.
 
 ```markdown
-## Summary
-One sentence — what does this PR actually do?
-
 ## Findings
 
 ### 🔴 Critical
-- `path/to/file.ext:LN` — issue. Why it matters. Suggested fix.
+- `path/to/file.ext:LN` — one-sentence problem statement. **Fix:** specific actionable change.
+- `path/to/file.ext:LN-LN2` — one-sentence problem statement. **Fix:** specific actionable change.
 
 ### 🟠 Major
-- `path/to/file.ext:LN` — …
+- `path/to/file.ext:LN` — one-sentence problem statement. **Fix:** specific actionable change.
 
 ### 🟡 Minor
-- `path/to/file.ext:LN` — …
-
-(Skip any section that has no findings — don't write empty headers.)
-
-## Verdict
-One line — "Approve, no concerns." / "Needs the criticals fixed before merge."
+- `path/to/file.ext:LN` — one-sentence problem statement. **Fix:** specific actionable change.
 ```
 
-If you find nothing of substance, say so explicitly: *"Reviewed the diff in full, no concerns found."* Empty reviews look like you didn't actually look.
+Every finding MUST have:
+- **File path + line number** (`file.ext:42` or `file.ext:42-58` for a range)
+- **One sentence** describing the problem — not a paragraph
+- **`Fix:`** — a concrete, implementable change. Not "consider X" or "maybe Y". Specific.
 
-### 7. Post the review — exactly once
+If a finding lacks a file:line, drop it. If you can't describe a concrete fix, drop it. Vibes don't ship.
 
-Write the body to a temp file (avoids quoting hell), then post **one** call:
+**Forbidden sections** (do not write any of these):
+- "## Review summary" / "## Summary" with prose
+- "## Things I deliberately did NOT flag"
+- "## Notes (not blocking)" / "## Observations"
+- "## Tests / verification"
+- "## Verdict" with prose
+- "## Review confidence: X/10"
+- "Self-review:", "Test signal:", "Scope skipped:", "Author/reviewer to decide…"
+- Praise/encouragement ("Solid work", "Well-structured PR", "Strong design wins")
+
+These are noise. The findings table IS the review. The verb (`--approve` vs `--comment`) IS the verdict.
+
+If there are no findings at all (after dedup), output exactly:
+
+```
+No new issues found beyond the existing reviews.
+```
+
+### 8. Post — exactly once
+
+Write the body to a temp file, then one of:
 
 ```sh
-cat > /tmp/prsnooze-review-<N>.md <<'EOF'
-…review body…
-EOF
 gh pr review <N> --comment --body-file /tmp/prsnooze-review-<N>.md
 ```
 
-If the enclosing prsnooze prompt grants `--approve` authority (small PR, no criticality flags, no critical/major findings), use that verb instead:
+…or `--approve` if the enclosing prompt's approval policy grants it AND you found nothing new.
 
-```sh
-gh pr review <N> --approve --body-file /tmp/prsnooze-review-<N>.md
-```
-
-**Trust gh's exit code**. If it returns success, your review is posted. Do **not** retry, do **not** also post a plain comment as a "backup". A failed post will exit non-zero — only then handle the error.
+Trust gh's exit code. Do not retry on success metadata.
 
 ## What NOT to do
 
-- Don't approve a PR you didn't actually read through.
-- Don't post the same review twice for any reason.
-- Don't ask the user clarifying questions. You're headless — there's nobody to ask.
-- Don't refactor the PR's code yourself. You're a reviewer, not the author.
-- Don't be exhaustive about nits. Five nits drown out one critical.
-- Don't speculate ("could maybe fail under X if Y"). Say it concretely or skip it.
+- Don't write prose intros, summaries, or verdict paragraphs.
+- Don't include "things I deliberately did NOT flag" sections.
+- Don't echo concerns already raised by another reviewer.
+- Don't include `Review confidence:` / `Self-review:` / `Test signal:` lines.
+- Don't praise the PR. The absence of findings is the praise.
+- Don't post twice.
+- Don't surface a finding without a file:line anchor and a concrete fix.
