@@ -268,6 +268,11 @@ main {
   background: rgba(234, 179, 8, 0.18);
   color: var(--yellow);
 }
+.badge.outcome-no_new_findings {
+  background: rgba(138, 146, 166, 0.18);
+  color: var(--muted);
+  font-style: italic;
+}
 .log .kind-tool_use { color: var(--yellow); }
 .log .kind-tool_result { color: var(--muted); }
 .log .kind-assistant_text { color: var(--text); }

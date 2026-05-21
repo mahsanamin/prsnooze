@@ -34,13 +34,9 @@ Catalog every concern that's been raised: paths, line numbers, paraphrased issue
 
 **You will NOT re-raise anything already there — not even with different wording.** Same concern + different phrasing = a duplicate. Drop it.
 
-If every concern you'd raise is already covered, the output is exactly this single line:
+If every concern you'd raise is already covered: **DO NOT POST ANYTHING.** Posting a "no new issues" comment is itself PR clutter — don't add it.
 
-```
-No new issues found beyond the existing reviews.
-```
-
-…and you stop. That single line is the review body. Nothing else, no prose, no padding.
+Just say so in your final response (which goes back to prsnooze's UI, not the PR) and stop. Skip steps 5–8 entirely. The absence of a posted comment is the signal that nothing's new. prsnooze will surface this state in its UI separately.
 
 ### 3. Honor project conventions
 
@@ -67,6 +63,8 @@ For each non-trivial changed file, open it (not just the hunks — context matte
 **Drop all ⚪ nits.** Surface 🟡 minor only if the PR is small (≤ 50 prod lines) AND there are no major/critical findings. Otherwise minor is noise.
 
 ### 7. Write the body — STRICT format
+
+(Reminder: if step 2's dedup produced no new findings, you already stopped without posting. This section only applies when you have ≥1 new finding to share.)
 
 Exactly this structure. Skip a section entirely if it has no findings. No other sections.
 
@@ -103,11 +101,7 @@ If a finding lacks a file:line, drop it. If you can't describe a concrete fix, d
 
 These are noise. The findings table IS the review. The verb (`--approve` vs `--comment`) IS the verdict.
 
-If there are no findings at all (after dedup), output exactly:
-
-```
-No new issues found beyond the existing reviews.
-```
+If you reach this step with zero findings (i.e., the diff has new code worth a finding but every concern was already raised by someone — which step 2 should have caught), still don't post. Step 2's "don't post anything, just exit" rule wins.
 
 ### 8. Post — exactly once
 

@@ -125,6 +125,7 @@ function outcomeLabel(o) {
     case "approved": return "✓ approved";
     case "changes_requested": return "⚠ changes requested";
     case "commented": return "💬 commented";
+    case "no_new_findings": return "○ nothing new (no post)";
     case "skipped": return "↪ skipped";
     default: return o || "";
   }
@@ -135,6 +136,7 @@ function outcomeBadge(j) {
   const o = j.outcome;
   const cls = o === "approved" ? "approved"
     : o === "changes_requested" ? "changes_requested"
+    : o === "no_new_findings" ? "no_new_findings"
     : "commented";
   return `<span class="badge outcome-${cls}">${escapeHtml(outcomeLabel(o))}</span> `;
 }
