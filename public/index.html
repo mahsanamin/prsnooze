@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>prsnooze — your PR gets reviewed while you sleep</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link id="favicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -20,6 +20,13 @@
     </header>
 
     <main>
+      <!-- "While you were away" summary, shown on reload when reviews finished
+           since you last had the page open. -->
+      <section id="welcome-banner" class="welcome-banner" hidden>
+        <span id="welcome-text"></span>
+        <button id="welcome-dismiss" class="welcome-dismiss" title="Dismiss">✕</button>
+      </section>
+
       <section class="hero">
         <img
           class="hero-img"
@@ -30,8 +37,8 @@
           <h2>Do not disturb.</h2>
           <p>
             Whoever runs this prsnooze instance is <em>probably asleep</em>. The bot
-            isn't. Paste a PR URL below — it'll review the PR and post comments
-            before anyone wakes up.
+            isn't. Paste one or more PR URLs below — each opens its own tab and gets
+            reviewed while you're away.
           </p>
           <p class="hero-fineprint">
             (the hero image is a placeholder — set <code>HERO_IMAGE</code> in <code>.env</code> to swap.)
@@ -41,26 +48,30 @@
 
       <section class="submit">
         <form id="submit-form">
-          <input
+          <textarea
             id="pr-url"
-            type="url"
             name="prUrl"
-            placeholder="https://github.com/owner/repo/pull/123"
+            rows="1"
+            placeholder="https://github.com/owner/repo/pull/123   (paste several — one per line)"
             autocomplete="off"
             required
-          />
+          ></textarea>
           <button id="submit-btn" type="submit">Review</button>
         </form>
-        <div id="submit-msg" class="submit-msg"></div>
+        <div class="submit-row">
+          <div id="submit-msg" class="submit-msg"></div>
+          <div class="notif-controls">
+            <label class="toggle" title="Play a soft chime when a review finishes">
+              <input type="checkbox" id="sound-toggle" /> 🔔 sound
+            </label>
+            <span id="notif-hint" class="notif-hint"></span>
+          </div>
+        </div>
       </section>
 
-      <section class="active" id="active-section" hidden>
-        <div class="active-head">
-          <h2 id="active-title">Active review</h2>
-          <span id="active-state" class="badge">queued</span>
-        </div>
-        <div id="active-meta" class="active-meta"></div>
-        <ol id="active-log" class="log"></ol>
+      <section class="tabs" id="tabs-section" hidden>
+        <div class="tab-bar" id="tab-bar"></div>
+        <div class="tab-panels" id="tab-panels"></div>
       </section>
 
       <section class="recent">
