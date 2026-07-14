@@ -32,6 +32,7 @@ const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "1
 const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
 const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
 const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? "true") === "true";
+const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_REVIEWS || "1", 10));
 
 for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
   fs.mkdirSync(d, { recursive: true });
@@ -54,6 +55,7 @@ function pushEvent(jobId, event) {
   if (event.kind === "phase") job.phase = event.phase;
   if (event.kind === "pr_meta") job.prMeta = event;
   if (event.kind === "worktree_ready") job.worktreePath = event.path;
+  if (event.kind === "claude_started") job.claudePid = event.pid || null;
   if (event.kind === "summary") job.summary = event;
   if (event.kind === "failed") job.error = event.error;
   if (event.kind === "outcome_detected") job.outcome = event.outcome;
@@ -70,6 +72,7 @@ function pushEvent(jobId, event) {
     event.kind === "queued" ||
     event.kind === "started" ||
     event.kind === "phase" ||
+    event.kind === "claude_started" ||
     event.kind === "done" ||
     event.kind === "failed" ||
     event.kind === "summary"
@@ -78,18 +81,20 @@ function pushEvent(jobId, event) {
   }
 }
 
-const queue = new Queue((job, helpers) =>
-  runReviewJob(job, helpers, {
-    reposDir: REPOS_DIR,
-    worktreesDir: WORKTREES_DIR,
-    claudeBin: CLAUDE_BIN,
-    keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
-    autoApprove: AUTO_APPROVE,
-    autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
-    autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
-    confidenceThreshold: CONFIDENCE_THRESHOLD,
-    skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
-  }),
+const queue = new Queue(
+  (job, helpers) =>
+    runReviewJob(job, helpers, {
+      reposDir: REPOS_DIR,
+      worktreesDir: WORKTREES_DIR,
+      claudeBin: CLAUDE_BIN,
+      keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
+      autoApprove: AUTO_APPROVE,
+      autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
+      autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
+      confidenceThreshold: CONFIDENCE_THRESHOLD,
+      skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
+    }),
+  { concurrency: MAX_CONCURRENT_REVIEWS },
 );
 
 queue.on("job", ({ jobId, event }) => pushEvent(jobId, event));
@@ -202,7 +207,11 @@ app.get("/api/jobs/:id/events", (req, res) => {
   });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+// Restore past jobs from disk and reconcile anything left mid-flight by a
+// previous server that crashed or was restarted. Must run before we listen.
+hydrateJobs();
+
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`prsnooze listening on http://0.0.0.0:${PORT}`);
   console.log(`  data home: ${DATA_HOME}`);
   console.log(`  repos:     ${REPOS_DIR}`);
@@ -213,9 +222,111 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
   console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
   console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
+  console.log(`  max concurrent reviews: ${MAX_CONCURRENT_REVIEWS}`);
 });
 
+// Graceful shutdown: stop accepting connections, tell every running review to
+// terminate (which SIGTERMs its whole process group), then exit. Prevents the
+// orphaned-claude-process problem on Ctrl-C / kill / service restart.
+let shuttingDown = false;
+function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\nReceived ${sig} — stopping active reviews…`);
+  let aborted = 0;
+  for (const job of jobs.values()) {
+    if (job.state === "running" && job.abort) {
+      try {
+        job.abort.abort();
+        aborted++;
+      } catch {}
+    }
+  }
+  console.log(`  signalled ${aborted} running review(s); exiting shortly.`);
+  try {
+    server.close();
+  } catch {}
+  // Give children a moment to receive SIGTERM and unwind before we go.
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
 // --- helpers ---
+
+// Is a process with this PID currently alive (and ours to signal)?
+function isAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0); // signal 0 = existence check, doesn't actually kill
+    return true;
+  } catch (e) {
+    return e.code === "EPERM"; // exists but owned by someone else
+  }
+}
+
+// Load persisted jobs into memory on boot so the UI shows history across
+// restarts, and reconcile any job that was still "queued"/"running" when the
+// previous server died: mark it "interrupted", and if its review process is
+// somehow still alive (an orphan), signal its group to terminate.
+function hydrateJobs() {
+  let files;
+  try {
+    files = fs.readdirSync(JOBS_DIR);
+  } catch {
+    return;
+  }
+  let loaded = 0;
+  let interrupted = 0;
+  let reaped = 0;
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    let job;
+    try {
+      job = JSON.parse(fs.readFileSync(path.join(JOBS_DIR, f), "utf8"));
+    } catch {
+      continue; // skip corrupt/partial files
+    }
+    if (!job || !job.id) continue;
+
+    if (job.state === "running" || job.state === "queued") {
+      // A fresh boot means this can't still be true — the process that owned
+      // it is gone. Reap a leftover orphan if one is still running.
+      if (isAlive(job.claudePid)) {
+        try {
+          process.kill(-job.claudePid, "SIGTERM"); // negative = whole group
+        } catch {
+          try {
+            process.kill(job.claudePid, "SIGTERM");
+          } catch {}
+        }
+        reaped++;
+      }
+      job.state = "interrupted";
+      job.interruptedAt = Date.now();
+      job.claudePid = null;
+      if (!Array.isArray(job.events)) job.events = [];
+      job.events.push({
+        ts: Date.now(),
+        kind: "interrupted",
+        message: "Server restarted while this review was in progress.",
+      });
+      persistJob(job);
+      interrupted++;
+    }
+
+    jobs.set(job.id, job);
+    loaded++;
+  }
+  if (loaded) {
+    console.log(
+      `  restored ${loaded} past job(s)` +
+        (interrupted ? `, ${interrupted} interrupted` : "") +
+        (reaped ? `, ${reaped} orphan(s) reaped` : ""),
+    );
+  }
+}
+
 function sendSse(res, payload) {
   try {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
