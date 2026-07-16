@@ -225,7 +225,11 @@ function renderHead(rev) {
   const num = rev.prMeta?.number || prNumberFromUrl(rev.prUrl);
   const repo = rev.prMeta?.nameWithOwner || "";
   const title = rev.prMeta?.title || (num ? `PR #${num}` : `Review ${rev.id.slice(0, 8)}`);
-  let html = `<a class="ttl" href="${rev.prUrl || "#"}" target="_blank" rel="noopener" title="${escapeHtml(rev.prUrl || "")}">${escapeHtml(title)} ↗</a>`;
+  // Only allow http(s) URLs into href, and escape everything interpolated into
+  // the attribute — a crafted prUrl must not break out or use javascript:.
+  const rawUrl = rev.prUrl || "";
+  const safeUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : "#";
+  let html = `<a class="ttl" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" title="${escapeHtml(rawUrl)}">${escapeHtml(title)} ↗</a>`;
   html += `<span class="badge ${rev.state}">${badgeText(rev)}</span>`;
   if (isHost && needsApprove(rev)) html += `<button class="approve" data-id="${rev.id}">✓ Approve PR</button>`;
   html += `<div class="modes"><button data-mode="zen" class="${mode === "zen" ? "on" : ""}">🧘 Zen</button><button data-mode="detailed" class="${mode === "detailed" ? "on" : ""}">🛠 Detailed</button></div>`;
