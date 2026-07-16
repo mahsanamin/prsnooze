@@ -306,7 +306,9 @@ function renderSummary(rev) {
       case "skipped": lead = "↪ <b>Skipped.</b> " + escapeHtml(rev.skipReason || ""); break;
       default: lead = "✓ <b>Done.</b>";
     }
-    html = lead + (rev.summaryText ? "<br><span style='color:var(--text)'>" + escapeHtml(rev.summaryText) + "</span>" : "");
+    // The full verdict/comment is only shown in Detailed mode, small + muted
+    // so it doesn't dominate. Zen shows just the one-line outcome.
+    html = lead + (rev.summaryText && mode === "detailed" ? `<div class="summary-detail">${escapeHtml(rev.summaryText)}</div>` : "");
   }
   rev.els.summary.className = "card summary" + (cls ? " " + cls : "");
   rev.els.summary.innerHTML = html;
@@ -318,7 +320,7 @@ function applyMode(rev) {
 function setMode(m) {
   mode = m;
   localStorage.setItem(LS_MODE, m);
-  for (const r of reviews.values()) { if (r.els?.head) renderHead(r); applyMode(r); }
+  for (const r of reviews.values()) { if (r.els?.head) { renderHead(r); renderSummary(r); } applyMode(r); }
 }
 
 async function loadFinishedLog(rev) {
