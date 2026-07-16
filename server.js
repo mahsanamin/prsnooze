@@ -3,6 +3,7 @@ const os = require("node:os");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const express = require("express");
+const { execSync } = require("node:child_process");
 const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
@@ -32,7 +33,28 @@ const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "1
 const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
 const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
 const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? "true") === "true";
+// How many reviews run at once. Default 1 = sequential (one at a time, no
+// concurrency). Set >1 to allow that many concurrent reviews.
 const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_REVIEWS || "1", 10));
+
+// Who owns the machine this instance runs on — surfaced in the UI so teammates
+// know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
+const HOST_NAME = detectHost();
+function detectHost() {
+  const tryCmd = (cmd) => {
+    try {
+      return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  return (
+    process.env.PRSNOOZE_HOST ||
+    tryCmd("git config user.name") ||
+    os.userInfo().username ||
+    os.hostname()
+  );
+}
 
 for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
   fs.mkdirSync(d, { recursive: true });
@@ -113,10 +135,18 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/config", (_req, res) => {
+app.get("/api/config", (req, res) => {
+  // "Host" = the page was opened from this machine's own browser (loopback).
+  // Only then do we surface the manual-approve control. Teammates reaching the
+  // UI over the LAN get a non-loopback address and won't see it.
+  const ip = req.socket.remoteAddress || "";
+  const isHost = ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
   res.json({
     heroImage: HERO_IMAGE,
     brand: "prsnooze",
+    host: HOST_NAME,
+    isHost,
+    concurrent: MAX_CONCURRENT_REVIEWS > 1,
   });
 });
 
@@ -222,7 +252,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
   console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
   console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
-  console.log(`  max concurrent reviews: ${MAX_CONCURRENT_REVIEWS}`);
+  console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
 });
 
 // Graceful shutdown: stop accepting connections, tell every running review to
