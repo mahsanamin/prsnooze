@@ -218,7 +218,17 @@ The bundled default is designed for headless use: no interactive prompts, severi
 
 ## Concurrency
 
-One review at a time. Additional submissions queue FIFO. The topbar shows current queue depth.
+One review at a time by default — additional submissions queue FIFO, and the topbar shows queue depth. To review several PRs at once, set **`MAX_CONCURRENT_REVIEWS`** to the number you want (e.g. `3`). Each review gets its own worktree and Claude session; only the quick per-repo git prep (`fetch` + `worktree add`) takes turns, so same-repo reviews never race on the shared clone.
+
+## Manual approve (host only)
+
+prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. When the UI is opened from **the host's own browser** (i.e. `localhost` — teammates reaching it over the LAN don't see this), an **✓ Approve PR** button appears on any finished review that wasn't auto-approved. It doesn't approve for you: it copies the exact command
+
+```
+gh pr review <pr-url> --approve
+```
+
+to your clipboard so you run it in your own terminal. `gh` is already required (and authenticated) for prsnooze to work, so nothing extra to install. There's no setting and no server-side approval endpoint — the write happens under your own `gh` identity, by your own hand.
 
 ## File layout
 
@@ -228,7 +238,8 @@ One review at a time. Additional submissions queue FIFO. The topbar shows curren
 | `bin/docker-server` | Docker dispatcher (start/stop/ssh/login/etc) |
 | `Dockerfile` / `docker-compose.yml` | Container definition |
 | `server.js` | Express app, SSE, queue wiring, `.env` loader |
-| `lib/queue.js` | Single-worker FIFO with EventEmitter |
+| `lib/queue.js` | Concurrency-capped worker pool with EventEmitter |
+| `lib/repo-lock.js` | Per-repo serialization for git prep (safe concurrency) |
 | `lib/review-job.js` | Per-job orchestrator |
 | `lib/git-ops.js` | `gh repo clone`, `git fetch`, `git worktree add/remove` |
 | `lib/github.js` | PR URL parser + `gh pr view` wrapper |
