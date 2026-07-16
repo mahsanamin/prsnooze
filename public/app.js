@@ -225,15 +225,44 @@ function renderHead(rev) {
   const num = rev.prMeta?.number || prNumberFromUrl(rev.prUrl);
   const repo = rev.prMeta?.nameWithOwner || "";
   const title = rev.prMeta?.title || (num ? `PR #${num}` : `Review ${rev.id.slice(0, 8)}`);
-  // Only allow http(s) URLs into href, and escape everything interpolated into
-  // the attribute — a crafted prUrl must not break out or use javascript:.
-  const rawUrl = rev.prUrl || "";
-  const safeUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : "#";
-  let html = `<a class="ttl" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" title="${escapeHtml(rawUrl)}">${escapeHtml(title)} ↗</a>`;
-  html += `<span class="badge ${rev.state}">${badgeText(rev)}</span>`;
-  if (isHost && needsApprove(rev)) html += `<button class="approve" data-id="${rev.id}">✓ Approve PR</button>`;
-  html += `<div class="modes"><button data-mode="zen" class="${mode === "zen" ? "on" : ""}">🧘 Zen</button><button data-mode="detailed" class="${mode === "detailed" ? "on" : ""}">🛠 Detailed</button></div>`;
-  rev.els.head.innerHTML = html;
+  const head = rev.els.head;
+  head.replaceChildren();
+  // Title link is built as a DOM node so the PR URL never enters an HTML
+  // string, and only a validated http(s) URL is assigned to href (parsing
+  // rejects javascript: and other schemes → falls back to "#").
+  const a = document.createElement("a");
+  a.className = "ttl";
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = `${title} ↗`;
+  a.href = "#";
+  try {
+    const u = new URL(rev.prUrl || "");
+    if (u.protocol === "https:" || u.protocol === "http:") { a.href = u.href; a.title = rev.prUrl; }
+  } catch {}
+  head.appendChild(a);
+  // Remaining controls built via DOM (no HTML sink) — text via textContent.
+  const badge = document.createElement("span");
+  badge.className = `badge ${rev.state}`;
+  badge.textContent = badgeText(rev);
+  head.appendChild(badge);
+  if (isHost && needsApprove(rev)) {
+    const b = document.createElement("button");
+    b.className = "approve";
+    b.dataset.id = rev.id;
+    b.textContent = "✓ Approve PR";
+    head.appendChild(b);
+  }
+  const modes = document.createElement("div");
+  modes.className = "modes";
+  for (const m of ["zen", "detailed"]) {
+    const mb = document.createElement("button");
+    mb.dataset.mode = m;
+    if (mode === m) mb.className = "on";
+    mb.textContent = m === "zen" ? "🧘 Zen" : "🛠 Detailed";
+    modes.appendChild(mb);
+  }
+  head.appendChild(modes);
   rev.els.submeta.textContent = `${repo}${num ? " #" + num : ""}${rev.prMeta?.authorLogin ? " · @" + rev.prMeta.authorLogin : ""}`;
 }
 
