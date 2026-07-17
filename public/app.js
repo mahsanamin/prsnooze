@@ -387,6 +387,10 @@ function openStream(rev) {
   if (rev.es) { try { rev.es.close(); } catch {} }
   ensurePanel(rev);
   rev.els.log.innerHTML = ""; rev._systemShown = false;
+  // Everything the server replays up front is history (including, on a Verify
+  // re-run, the whole original review). Render it, but don't let a replayed
+  // "done" re-fire chimes/notifications — the caught_up sentinel ends replay.
+  rev.replaying = true;
   const es = new EventSource(`/api/jobs/${rev.id}/events`);
   rev.es = es;
   es.onmessage = (msg) => { let ev; try { ev = JSON.parse(msg.data); } catch { return; } handleEvent(rev, ev); };
@@ -408,6 +412,12 @@ function handleEvent(rev, ev) {
     case "done": finish(rev, "done"); break;
     case "interrupted": setState(rev, "interrupted"); break;
     case "stream_end": if (!rev.finished && isTerminal(ev.state)) finish(rev, ev.state); break;
+    case "caught_up":
+      // End of the replayed backlog. The job is genuinely still running (the
+      // server only sends this for unfinished jobs), so clear the completion
+      // state a replayed "done" may have set, and let live events chime.
+      rev.replaying = false; rev.finished = false; rev.notified = false; rev.freshFinish = false;
+      break;
   }
 }
 
@@ -431,7 +441,7 @@ function finish(rev, state) {
   if (!rev.finishedAt) rev.finishedAt = Date.now();
   renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
   if (rev.id === selectedId) { updateSubmitButton(); applyMode(rev); }
-  if (first && !rev.notified) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
+  if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   updateStatusLight();
   refreshList();
 }
@@ -439,20 +449,34 @@ function finish(rev, state) {
 // --------------------------------------------------- delegated panel clicks -
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
-  if (ap && ap.dataset.id) { copyApproveCommand(ap.dataset.id); return; }
+  if (ap && ap.dataset.id) { approveReview(ap.dataset.id, ap); return; }
   const mb = e.target.closest(".modes button");
   if (mb) { setMode(mb.dataset.mode); return; }
   const sh = e.target.closest(".sect-h");
   if (sh) { sh.parentElement.classList.toggle("open"); }
 });
 
-function copyApproveCommand(id) {
+async function approveReview(id, btn) {
   const rev = reviews.get(id);
   if (!rev) return;
-  const cmd = `gh pr review ${rev.prUrl} --approve`;
-  const done = () => showToast(`Copied — run in your terminal to approve:<br><code>${escapeHtml(cmd)}</code>`);
-  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(cmd).then(done, () => showToast(`Run in your terminal to approve:<br><code>${escapeHtml(cmd)}</code>`));
-  else showToast(`Run in your terminal to approve:<br><code>${escapeHtml(cmd)}</code>`);
+  if (btn) { btn.disabled = true; btn.textContent = "Approving…"; }
+  try {
+    // Server runs `gh pr review --approve` under the host's own gh login,
+    // gated to loopback (see /api/jobs/:id/approve). No token in the browser.
+    const r = await fetch(`/api/jobs/${id}/approve`, { method: "POST" });
+    const data = await r.json();
+    if (!r.ok) {
+      showToast("Couldn't approve: " + escapeHtml(data.error || `HTTP ${r.status}`));
+      if (btn) { btn.disabled = false; btn.textContent = "✓ Approve PR"; }
+      return;
+    }
+    rev.outcome = "approved";
+    renderHead(rev); renderSummary(rev); renderLists();
+    showToast("✓ Approved on GitHub.");
+  } catch (e) {
+    showToast("Couldn't approve: " + escapeHtml(e.message));
+    if (btn) { btn.disabled = false; btn.textContent = "✓ Approve PR"; }
+  }
 }
 
 async function verifyReview(id) {
@@ -512,6 +536,8 @@ function entrySpec(ev) {
     case "started": return { cat: "meta", icon: "▶", label: "started", body: "worker started" };
     case "claude_started": return { cat: "meta", icon: "▶", label: "claude", body: `pid ${ev.pid ?? "?"}` };
     case "phase": return { cat: "phase", icon: "▸", label: "phase", body: `<strong>${escapeHtml(ev.phase || "")}</strong>` };
+    case "verify_restart": return { cat: "divider", icon: "↻", label: "", body: `<strong>${escapeHtml(ev.message || "Verify fixes — re-checking")}</strong>` };
+    case "caught_up": return null;
     case "log": return { cat: "info", icon: "·", label: "log", body: escapeHtml(ev.message || "") };
     case "pr_meta": return { cat: "pr", icon: "🔗", label: "PR", body: `<strong>${escapeHtml(ev.nameWithOwner || "")} #${ev.number}</strong> — ${escapeHtml(ev.title || "")}` };
     case "worktree_ready": return { cat: "info", icon: "📁", label: "worktree", body: `<span class="dim">${escapeHtml(ev.path || "")}</span>` };

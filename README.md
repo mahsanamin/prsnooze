@@ -222,13 +222,13 @@ One review at a time by default — additional submissions queue FIFO, and the t
 
 ## Manual approve (host only)
 
-prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. When the UI is opened from **the host's own browser** (i.e. `localhost` — teammates reaching it over the LAN don't see this), an **✓ Approve PR** button appears on any finished review that wasn't auto-approved. It doesn't approve for you: it copies the exact command
+prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. When the UI is opened from **the host's own browser** (i.e. `localhost` — teammates reaching it over the LAN don't see this), an **✓ Approve PR** button appears on any finished review that wasn't auto-approved. Clicking it approves the PR by running
 
 ```
 gh pr review <pr-url> --approve
 ```
 
-to your clipboard so you run it in your own terminal. `gh` is already required (and authenticated) for prsnooze to work, so nothing extra to install. There's no setting and no server-side approval endpoint — the write happens under your own `gh` identity, by your own hand.
+server-side, under your own `gh` identity. There is **no token, no env var, and no new auth** — it reuses the same authenticated `gh` that prsnooze already needs. The endpoint (`POST /api/jobs/:id/approve`) is gated to **loopback**: a request from anywhere but the host's own machine gets a 403, so a LAN teammate can neither see nor trigger it. The button is disabled if you authored the PR (you can't approve your own), and becomes **✓ Approved** once done.
 
 ## File layout
 

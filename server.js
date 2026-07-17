@@ -3,7 +3,9 @@ const os = require("node:os");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const express = require("express");
-const { execSync } = require("node:child_process");
+const { execSync, execFile } = require("node:child_process");
+const { promisify } = require("node:util");
+const execFileP = promisify(execFile);
 const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
@@ -144,12 +146,17 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/config", (req, res) => {
-  // "Host" = the page was opened from this machine's own browser (loopback).
-  // Only then do we surface the manual-approve control. Teammates reaching the
-  // UI over the LAN get a non-loopback address and won't see it.
+// "Host" = the request came from this machine's own browser (loopback). Only
+// the host may use the manual-approve control; teammates reaching the UI over
+// the LAN get a non-loopback address. Used both to gate the UI (config) and to
+// authorize the approve endpoint server-side (defense in depth).
+function isLoopback(req) {
   const ip = req.socket.remoteAddress || "";
-  const isHost = ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
+  return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
+}
+
+app.get("/api/config", (req, res) => {
+  const isHost = isLoopback(req);
   res.json({
     heroImage: HERO_IMAGE,
     brand: "prsnooze",
@@ -228,10 +235,37 @@ app.post("/api/jobs/:id/verify", (req, res) => {
   job.resumeSessionId = sessionId;
   job.state = "queued";
   job.finished = false;
-  job.events.push({ ts: Date.now(), kind: "log", message: "Verify fixes — resuming the original review session." });
+  job.events.push({ ts: Date.now(), kind: "verify_restart", message: "Verify fixes — re-checking whether the comments were addressed." });
   persistJob(job);
   queue.enqueue(job);
   res.json({ ok: true });
+});
+
+// Approve the PR — host only. The browser can't run `gh`, so the server shells
+// out to it here. No token/env var: this reuses the host's existing `gh` login
+// (the same identity every review posts under). Gated to loopback so only the
+// host's own browser can trigger it; a LAN teammate gets 403.
+app.post("/api/jobs/:id/approve", async (req, res) => {
+  if (!isLoopback(req)) return res.status(403).json({ error: "approve is host-only" });
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  if (!job.prUrl) return res.status(400).json({ error: "no PR URL on this job" });
+  // Reject approving your own PR up front (gh would also refuse).
+  if (HOST_LOGIN && job.prMeta?.authorLogin && HOST_LOGIN === job.prMeta.authorLogin) {
+    return res.status(400).json({ error: "you can't approve your own PR" });
+  }
+  try {
+    // Array args (no shell) — job.prUrl was validated by parsePrUrl at creation.
+    await execFileP("gh", ["pr", "review", job.prUrl, "--approve"], { timeout: 30000 });
+    job.outcome = "approved";
+    job.events.push({ ts: Date.now(), kind: "outcome_detected", outcome: "approved" });
+    job.events.push({ ts: Date.now(), kind: "log", message: `Approved by @${HOST_LOGIN || "host"} via prsnooze.` });
+    persistJob(job);
+    res.json({ ok: true, outcome: "approved" });
+  } catch (e) {
+    const detail = (e.stderr || e.message || "").toString().trim().split("\n").slice(-3).join(" ");
+    res.status(500).json({ error: `gh approve failed: ${detail || "unknown error"}` });
+  }
 });
 
 app.get("/api/jobs/:id/events", (req, res) => {
@@ -254,6 +288,11 @@ app.get("/api/jobs/:id/events", (req, res) => {
     sendSse(res, { kind: "stream_end", state: job.state });
     return res.end();
   }
+
+  // Mark the boundary between replayed history and genuinely-live events, so
+  // the client can render the backlog without re-firing chimes/notifications
+  // (matters on reconnect and on a "Verify fixes" re-run of a finished job).
+  sendSse(res, { kind: "caught_up" });
 
   // Subscribe to live events
   if (!subscribers.has(job.id)) subscribers.set(job.id, new Set());

@@ -315,6 +315,10 @@ main.app { flex: 1; min-height: 0; display: flex; }
 .cat-meta .ev-body { color: var(--muted); }
 .cat-sys { border-left-color: #2a241d; opacity: 0.7; }
 .cat-sys .ev-time, .cat-sys .ev-body { font-size: 11.5px; }
+/* Separator between the original review and a Verify-fixes re-run. */
+.cat-divider { border-left-color: var(--accent); border-top: 1px dashed var(--accent); border-bottom: 1px dashed var(--accent); background: rgba(251, 146, 60, 0.1); margin: 8px 0; border-radius: 0; }
+.cat-divider .ev-body { color: var(--accent); font-weight: 700; letter-spacing: 0.3px; }
+.cat-divider .ev-icon { color: var(--accent); }
 
 .log-details { display: inline-block; margin-top: 3px; width: 100%; }
 .log-details summary { cursor: pointer; color: var(--muted); font-size: 12px; list-style: none; display: inline-flex; align-items: center; gap: 4px; }
