@@ -41,6 +41,7 @@ let selectedId = null;
 let mode = localStorage.getItem(LS_MODE) === "detailed" ? "detailed" : "zen";
 let hostName = "";
 let isHost = false;
+let hostLogin = null;
 let welcomeShown = false;
 
 const isActive = (s) => s === "queued" || s === "running";
@@ -91,13 +92,11 @@ async function submitUrls(raw) {
 }
 
 function updateSubmitButton() {
-  const rev = selectedId && reviews.get(selectedId);
-  const val = input.value.trim();
-  if (rev && val === rev.prUrl) {
-    if (isActive(rev.state)) { submitBtn.textContent = "Reviewing…"; submitBtn.disabled = true; submitBtn.title = "A review is running — can't restart it"; return; }
-    submitBtn.textContent = "↻ Restart Review"; submitBtn.disabled = false; submitBtn.title = "Re-run the review for this PR"; return;
-  }
-  submitBtn.textContent = "Review"; submitBtn.disabled = false; submitBtn.title = "";
+  // Topbar button always starts a NEW review from the input. Per-review actions
+  // (Approve, Verify fixes) live in the panel.
+  submitBtn.textContent = "Start review";
+  submitBtn.disabled = false;
+  submitBtn.title = "";
 }
 
 // -------------------------------------------------------------- review model
@@ -246,12 +245,29 @@ function renderHead(rev) {
   badge.className = `badge ${rev.state}`;
   badge.textContent = badgeText(rev);
   head.appendChild(badge);
-  if (isHost && needsApprove(rev)) {
-    const b = document.createElement("button");
-    b.className = "approve";
-    b.dataset.id = rev.id;
-    b.textContent = "✓ Approve PR";
-    head.appendChild(b);
+  if (rev.state === "done") {
+    // Approve button — rights-aware:
+    if (rev.outcome === "approved") {
+      const b = document.createElement("button");
+      b.className = "approve"; b.disabled = true; b.textContent = "✓ Approved";
+      head.appendChild(b);
+    } else if (isHost) {
+      const b = document.createElement("button");
+      b.className = "approve"; b.textContent = "✓ Approve PR";
+      if (hostLogin && rev.prMeta?.authorLogin && hostLogin === rev.prMeta.authorLogin) {
+        b.disabled = true; b.title = "You can't approve your own PR";
+      } else {
+        b.dataset.id = rev.id;
+      }
+      head.appendChild(b);
+    }
+    // Verify fixes — resume the original session (needs a stored session id).
+    if (rev.sessionId) {
+      const v = document.createElement("button");
+      v.className = "verify"; v.dataset.verify = rev.id; v.textContent = "↻ Verify fixes";
+      v.title = "Resume the original review to check if your comments were addressed";
+      head.appendChild(v);
+    }
   }
   const modes = document.createElement("div");
   modes.className = "modes";
@@ -332,6 +348,7 @@ async function loadFinishedLog(rev) {
     if (job.prMeta) rev.prMeta = job.prMeta;
     rev.state = job.state; rev.outcome = job.outcome || rev.outcome; rev.finished = true;
     if (job.summary?.finalText) rev.summaryText = job.summary.finalText;
+    rev.sessionId = job.sessionId || job.summary?.sessionId || rev.sessionId;
     for (const ev of job.events || []) { if (ev.kind === "phase") rev.phase = ev.phase; appendLog(rev, ev); }
     rev.els.count.textContent = `${rev.els.log.children.length} events`;
     renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
@@ -358,7 +375,7 @@ function handleEvent(rev, ev) {
     case "queued": setState(rev, "queued"); break;
     case "pr_meta": rev.prMeta = ev; renderHead(rev); break;
     case "outcome_detected": rev.outcome = ev.outcome; renderHead(rev); renderSummary(rev); renderLists(); break;
-    case "summary": if (ev.finalText) rev.summaryText = ev.finalText; renderSummary(rev); break;
+    case "summary": if (ev.finalText) rev.summaryText = ev.finalText; if (ev.sessionId) rev.sessionId = ev.sessionId; renderSummary(rev); break;
     case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipReason = ev.reason; finish(rev, "done"); break;
     case "failed": rev.errorText = ev.error || ""; finish(rev, "failed"); break;
     case "done": finish(rev, "done"); break;
@@ -395,7 +412,9 @@ function finish(rev, state) {
 // --------------------------------------------------- delegated panel clicks -
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
-  if (ap) { copyApproveCommand(ap.dataset.id); return; }
+  if (ap && ap.dataset.id) { copyApproveCommand(ap.dataset.id); return; }
+  const vb = e.target.closest(".verify");
+  if (vb) { verifyReview(vb.dataset.verify); return; }
   const mb = e.target.closest(".modes button");
   if (mb) { setMode(mb.dataset.mode); return; }
   const sh = e.target.closest(".sect-h");
@@ -409,6 +428,21 @@ function copyApproveCommand(id) {
   const done = () => showToast(`Copied — run in your terminal to approve:<br><code>${escapeHtml(cmd)}</code>`);
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(cmd).then(done, () => showToast(`Run in your terminal to approve:<br><code>${escapeHtml(cmd)}</code>`));
   else showToast(`Run in your terminal to approve:<br><code>${escapeHtml(cmd)}</code>`);
+}
+
+async function verifyReview(id) {
+  const rev = reviews.get(id);
+  if (!rev) return;
+  showToast("Verifying — resuming the original review to check your comments…");
+  try {
+    const r = await fetch(`/api/jobs/${id}/verify`, { method: "POST" });
+    const data = await r.json();
+    if (!r.ok) { showToast("Couldn't verify: " + escapeHtml(data.error || "error")); return; }
+    // Reset so the resumed run streams live in place.
+    if (rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
+    rev.finished = false; rev.state = "running"; rev.outcome = null;
+    ensurePanel(rev); openStream(rev); selectReview(id); renderLists();
+  } catch (e) { showToast("Couldn't verify: " + escapeHtml(e.message)); }
 }
 
 let toastTimer = null;
@@ -651,6 +685,7 @@ async function loadConfig() {
     const cfg = await r.json();
     if (cfg.heroImage) document.body.style.setProperty("--hero", `url("${cfg.heroImage}")`);
     isHost = !!cfg.isHost;
+    hostLogin = cfg.hostLogin || null;
     if (cfg.host) { hostName = cfg.host; hostNameEl.textContent = `on ${hostName}'s machine`; }
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
     updateStatusLight();

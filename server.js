@@ -7,8 +7,8 @@ const { execSync } = require("node:child_process");
 const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
-const { runReviewJob } = require("./lib/review-job");
-const { parsePrUrl } = require("./lib/github");
+const { runReviewJob, runVerifyJob } = require("./lib/review-job");
+const { parsePrUrl, getSelfLogin } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -40,6 +40,10 @@ const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_R
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
 const HOST_NAME = detectHost();
+// The host's gh login (for approve-rights). Resolved once at startup; null if
+// gh isn't authenticated.
+let HOST_LOGIN = null;
+getSelfLogin().then((l) => { HOST_LOGIN = l || null; }).catch(() => {});
 function detectHost() {
   const tryCmd = (cmd) => {
     try {
@@ -78,6 +82,7 @@ function pushEvent(jobId, event) {
   if (event.kind === "pr_meta") job.prMeta = event;
   if (event.kind === "worktree_ready") job.worktreePath = event.path;
   if (event.kind === "claude_started") job.claudePid = event.pid || null;
+  if (event.kind === "summary" && event.sessionId) job.sessionId = event.sessionId;
   if (event.kind === "summary") job.summary = event;
   if (event.kind === "failed") job.error = event.error;
   if (event.kind === "outcome_detected") job.outcome = event.outcome;
@@ -104,8 +109,8 @@ function pushEvent(jobId, event) {
 }
 
 const queue = new Queue(
-  (job, helpers) =>
-    runReviewJob(job, helpers, {
+  (job, helpers) => {
+    const cfg = {
       reposDir: REPOS_DIR,
       worktreesDir: WORKTREES_DIR,
       claudeBin: CLAUDE_BIN,
@@ -115,7 +120,11 @@ const queue = new Queue(
       autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
       confidenceThreshold: CONFIDENCE_THRESHOLD,
       skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
-    }),
+    };
+    return job.mode === "verify"
+      ? runVerifyJob(job, helpers, cfg)
+      : runReviewJob(job, helpers, cfg);
+  },
   { concurrency: MAX_CONCURRENT_REVIEWS },
 );
 
@@ -146,6 +155,7 @@ app.get("/api/config", (req, res) => {
     brand: "prsnooze",
     host: HOST_NAME,
     isHost,
+    hostLogin: HOST_LOGIN,
     concurrent: MAX_CONCURRENT_REVIEWS > 1,
   });
 });
@@ -200,6 +210,28 @@ app.get("/api/jobs/:id", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   res.json(job);
+});
+
+// Verify fixes — re-run this job by RESUMING its original Claude session to
+// check whether the author addressed the review's comments. No new session.
+app.post("/api/jobs/:id/verify", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  const sessionId = job.sessionId || job.summary?.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ error: "no Claude session recorded for this review — run a fresh review instead" });
+  }
+  if (job.state === "running" || job.state === "queued") {
+    return res.status(409).json({ error: "this review is already running" });
+  }
+  job.mode = "verify";
+  job.resumeSessionId = sessionId;
+  job.state = "queued";
+  job.finished = false;
+  job.events.push({ ts: Date.now(), kind: "log", message: "Verify fixes — resuming the original review session." });
+  persistJob(job);
+  queue.enqueue(job);
+  res.json({ ok: true });
 });
 
 app.get("/api/jobs/:id/events", (req, res) => {

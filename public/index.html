@@ -8,22 +8,25 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <div class="wrap">
     <header class="topbar">
-      <span class="logo">
-        <svg viewBox="0 0 64 64" width="31" height="31" class="brand-svg">
-          <rect width="64" height="64" rx="15" fill="#2a241f" />
-          <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
-          <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
-        </svg>
-      </span>
-      <span class="brand-name">prsnooze</span>
-      <span class="brand-host" id="host-name"></span>
-      <form id="submit-form" class="addr-form">
+      <div class="brandrow">
+        <span class="logo">
+          <svg viewBox="0 0 64 64" width="30" height="30" class="brand-svg">
+            <rect width="64" height="64" rx="15" fill="#2a241f" />
+            <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
+            <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
+          </svg>
+        </span>
+        <span class="brand-name">prsnooze</span>
+        <span class="brand-host" id="host-name"></span>
+      </div>
+      <form id="submit-form" class="searchrow">
         <div class="addr">
           <span class="addr-lk">🔗</span>
-          <input id="pr-url" type="text" placeholder="paste one or more PR URLs…" autocomplete="off" />
+          <input id="pr-url" type="text" placeholder="Paste a GitHub PR URL to review…" autocomplete="off" />
         </div>
-        <button id="submit-btn" type="submit">Review</button>
+        <button id="submit-btn" type="submit">Start review</button>
       </form>
       <div class="topbar-right">
         <label class="toggle" title="Play a soft chime when a review finishes">
@@ -41,32 +44,34 @@
       <button id="welcome-dismiss" class="welcome-dismiss" title="Dismiss">✕</button>
     </section>
 
-    <main class="app">
-      <aside class="sidebar">
-        <h4>Active</h4>
-        <div id="active-list" class="side-list"></div>
-        <p id="active-empty" class="side-empty">nothing running</p>
-      </aside>
-      <section class="workarea">
-        <div id="empty-state" class="empty-state">
-          <div class="empty-eyes">
-            <svg viewBox="0 0 64 64" width="56" height="56">
-              <rect width="64" height="64" rx="15" fill="#2a241f" />
-              <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
-              <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
-            </svg>
+    <div class="appcard">
+      <main class="app">
+        <aside class="sidebar">
+          <h4>Active</h4>
+          <div id="active-list" class="side-list"></div>
+          <p id="active-empty" class="side-empty">nothing running</p>
+        </aside>
+        <section class="workarea">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-eyes">
+              <svg viewBox="0 0 64 64" width="56" height="56">
+                <rect width="64" height="64" rx="15" fill="#2a241f" />
+                <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
+                <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
+              </svg>
+            </div>
+            <p>Pick a review — active on the left, history below — or paste a PR URL above to start one.</p>
           </div>
-          <p>Pick a review — active on the left, history below — or paste a PR URL above to start one.</p>
-        </div>
-        <div id="panels" class="panels"></div>
+          <div id="panels" class="panels"></div>
+        </section>
+      </main>
+      <section class="recent">
+        <div class="rlabel">Recent sessions</div>
+        <div id="recent-list" class="rlist"></div>
+        <p id="recent-empty" class="recent-empty">no reviews yet</p>
       </section>
-    </main>
-
-    <section class="recent">
-      <div class="rlabel">Recent sessions</div>
-      <div id="recent-list" class="rlist"></div>
-      <p id="recent-empty" class="recent-empty">no reviews yet</p>
-    </section>
+    </div>
+    </div>
 
     <div id="toast" class="toast" hidden></div>
 
