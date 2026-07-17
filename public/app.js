@@ -51,6 +51,11 @@ const isTerminal = (s) => s === "done" || s === "failed" || s === "interrupted";
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  // If the input points at a PR that already has a finished review with a
+  // saved session, the button re-checks that review (resumes the session)
+  // instead of starting a fresh one. See updateSubmitButton().
+  const verifyId = submitBtn.dataset.verifyId;
+  if (verifyId && reviews.has(verifyId)) { await verifyReview(verifyId); return; }
   await submitUrls(input.value);
 });
 input.addEventListener("input", updateSubmitButton);
@@ -92,16 +97,37 @@ async function submitUrls(raw) {
 }
 
 function updateSubmitButton() {
-  // Topbar button always starts a NEW review from the input. Per-review actions
-  // (Approve, Verify fixes) live in the panel.
-  submitBtn.textContent = "Start review";
+  // The one topbar button is context-aware: when the input points at a PR that
+  // already has a finished review with a saved session, it becomes "Verify
+  // fixes" and resumes that session; otherwise it starts a fresh review.
+  const rev = findVerifiable(input.value);
+  if (rev) {
+    submitBtn.textContent = "↻ Verify fixes";
+    submitBtn.title = "Resume the original review to check if the comments were addressed";
+    submitBtn.dataset.verifyId = rev.id;
+  } else {
+    submitBtn.textContent = "Start review";
+    submitBtn.title = "";
+    delete submitBtn.dataset.verifyId;
+  }
   submitBtn.disabled = false;
-  submitBtn.title = "";
 }
 
 // -------------------------------------------------------------- review model
 function prNumberFromUrl(url) { const m = /\/pull\/(\d+)/.exec(url || ""); return m ? m[1] : null; }
 function shortRepo(n) { if (!n) return ""; const p = n.split("/"); return p[p.length - 1]; }
+function normUrl(u) { try { const x = new URL(u); return (x.origin + x.pathname).replace(/\/+$/, ""); } catch { return String(u || "").trim().replace(/\/+$/, ""); } }
+// A finished review is "verifiable" if it has a session to resume. Only a
+// single, exact URL match qualifies (multi-URL submits always start fresh).
+function findVerifiable(raw) {
+  const urls = String(raw || "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  if (urls.length !== 1) return null;
+  const target = normUrl(urls[0]);
+  for (const rev of reviews.values()) {
+    if (rev.state === "done" && rev.sessionId && normUrl(rev.prUrl) === target) return rev;
+  }
+  return null;
+}
 
 function upsertReview(data) {
   let rev = reviews.get(data.id);
@@ -261,13 +287,9 @@ function renderHead(rev) {
       }
       head.appendChild(b);
     }
-    // Verify fixes — resume the original session (needs a stored session id).
-    if (rev.sessionId) {
-      const v = document.createElement("button");
-      v.className = "verify"; v.dataset.verify = rev.id; v.textContent = "↻ Verify fixes";
-      v.title = "Resume the original review to check if your comments were addressed";
-      head.appendChild(v);
-    }
+    // Re-checking a finished review ("Verify fixes") is driven from the topbar
+    // button: selecting a review fills its URL into the search, which flips the
+    // Start-review button to Verify-fixes. See updateSubmitButton().
   }
   const modes = document.createElement("div");
   modes.className = "modes";
@@ -352,6 +374,7 @@ async function loadFinishedLog(rev) {
     for (const ev of job.events || []) { if (ev.kind === "phase") rev.phase = ev.phase; appendLog(rev, ev); }
     rev.els.count.textContent = `${rev.els.log.children.length} events`;
     renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
+    if (rev.id === selectedId) updateSubmitButton();
   } catch {}
 }
 
@@ -413,8 +436,6 @@ function finish(rev, state) {
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
   if (ap && ap.dataset.id) { copyApproveCommand(ap.dataset.id); return; }
-  const vb = e.target.closest(".verify");
-  if (vb) { verifyReview(vb.dataset.verify); return; }
   const mb = e.target.closest(".modes button");
   if (mb) { setMode(mb.dataset.mode); return; }
   const sh = e.target.closest(".sect-h");
