@@ -123,10 +123,14 @@ function findVerifiable(raw) {
   const urls = String(raw || "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
   if (urls.length !== 1) return null;
   const target = normUrl(urls[0]);
+  let best = null;
   for (const rev of reviews.values()) {
-    if (rev.state === "done" && rev.sessionId && normUrl(rev.prUrl) === target) return rev;
+    if (rev.state === "done" && rev.sessionId && normUrl(rev.prUrl) === target) {
+      // If the same PR was reviewed more than once, resume the most recent.
+      if (!best || (rev.finishedAt || 0) > (best.finishedAt || 0)) best = rev;
+    }
   }
-  return null;
+  return best;
 }
 
 function upsertReview(data) {
