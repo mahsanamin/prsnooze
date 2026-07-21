@@ -220,15 +220,19 @@ The bundled default is designed for headless use: no interactive prompts, severi
 
 One review at a time by default — additional submissions queue FIFO, and the topbar shows queue depth. To review several PRs at once, set **`MAX_CONCURRENT_REVIEWS`** to the number you want (e.g. `3`). Each review gets its own worktree and Claude session; only the quick per-repo git prep (`fetch` + `worktree add`) takes turns, so same-repo reviews never race on the shared clone.
 
-## Manual approve (host only)
+## Manual approve (password-gated)
 
-prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. When the UI is opened from **the host's own browser** (i.e. `localhost` — teammates reaching it over the LAN don't see this), an **✓ Approve PR** button appears on any finished review that wasn't auto-approved. Clicking it approves the PR by running
+prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. A manual **✓ Approve PR** button appears on any finished review that wasn't auto-approved, gated behind a shared password so it works whether you're on `localhost` or reaching prsnooze through a reverse proxy.
 
-```
-gh pr review <pr-url> --approve
-```
+**Setup:** set `PRSNOOZE_ADMIN_PASSWORD` in your env/`.env`. Leave it unset and approve is disabled entirely (the button explains it's off).
 
-server-side, under your own `gh` identity. There is **no token, no env var, and no new auth** — it reuses the same authenticated `gh` that prsnooze already needs. The endpoint (`POST /api/jobs/:id/approve`) is gated to **loopback**: a request from anywhere but the host's own machine gets a 403, so a LAN teammate can neither see nor trigger it. The button is disabled if you authored the PR (you can't approve your own), and becomes **✓ Approved** once done.
+**How it works:**
+- A **🔒 Locked** chip sits in the top bar. Click it (or a locked Approve button) to get a prompt for the admin password.
+- The password is checked **server-side only** and never sent to the browser. On success the server sets a signed, `HttpOnly` cookie (a timestamped HMAC — no server-side session, survives restarts) and the browser is **🔓 Unlocked** for 1 hour.
+- Unlock state is **per browser**: entering it in one browser doesn't unlock another, another machine, or an incognito window — each proves the password once. Cookies are also per-URL, so `localhost` and the proxy hostname unlock independently.
+- While unlocked, **✓ Approve PR** runs `gh pr review <pr-url> --approve` server-side under this machine's `gh` login (so `gh` must be installed + authenticated — no token/PAT needed). Every approve re-verifies the cookie (`POST /api/jobs/:id/approve` → 401 if locked). It's disabled for a PR you (that `gh` identity) authored, and becomes **✓ Approved** once done.
+
+Over the proxy you're on HTTPS, so the password is encrypted in transit; on plain `http://localhost` it never leaves your machine.
 
 ## File layout
 

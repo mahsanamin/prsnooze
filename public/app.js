@@ -21,6 +21,13 @@ const panels = $("panels");
 const emptyState = $("empty-state");
 const faviconEl = $("favicon");
 const toastEl = $("toast");
+const lockChip = $("lock-chip");
+const unlockBackdrop = $("unlock-backdrop");
+const unlockForm = $("unlock-modal");
+const unlockPass = $("unlock-pass");
+const unlockEye = $("unlock-eye");
+const unlockErr = $("unlock-err");
+const unlockCancel = $("unlock-cancel");
 
 const LS_SELECTED = "prsnooze:selected";
 const LS_SOUND = "prsnooze:sound";
@@ -43,6 +50,10 @@ let hostName = "";
 let isHost = false;
 let hostLogin = null;
 let welcomeShown = false;
+let passwordConfigured = false;
+let unlocked = false;
+let relockTimer = null;
+let pendingApprove = null; // {id, btn} — an approve click waiting on unlock
 
 const isActive = (s) => s === "queued" || s === "running";
 const isTerminal = (s) => s === "done" || s === "failed" || s === "interrupted";
@@ -276,18 +287,26 @@ function renderHead(rev) {
   badge.textContent = badgeText(rev);
   head.appendChild(badge);
   if (rev.state === "done") {
-    // Approve button — rights-aware:
+    // Approve button. Shown whenever a password is configured on the host.
+    // When the browser is locked it renders muted with a 🔒; clicking it opens
+    // the unlock prompt (and continues the approve once unlocked). The server
+    // approves under its own gh identity, so a self-authored PR is refused.
     if (rev.outcome === "approved") {
       const b = document.createElement("button");
       b.className = "approve"; b.disabled = true; b.textContent = "✓ Approved";
       head.appendChild(b);
-    } else if (isHost) {
+    } else if (passwordConfigured) {
       const b = document.createElement("button");
-      b.className = "approve"; b.textContent = "✓ Approve PR";
+      b.className = "approve";
+      b.dataset.id = rev.id;
       if (hostLogin && rev.prMeta?.authorLogin && hostLogin === rev.prMeta.authorLogin) {
-        b.disabled = true; b.title = "You can't approve your own PR";
+        b.disabled = true; b.textContent = "✓ Approve PR";
+        b.title = `Can't approve your own PR (prsnooze approves as @${hostLogin})`;
+      } else if (!unlocked) {
+        b.classList.add("locked"); b.textContent = "🔒 Approve PR";
+        b.title = "Locked — click to enter the admin password";
       } else {
-        b.dataset.id = rev.id;
+        b.textContent = "✓ Approve PR";
       }
       head.appendChild(b);
     }
@@ -449,7 +468,11 @@ function finish(rev, state) {
 // --------------------------------------------------- delegated panel clicks -
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
-  if (ap && ap.dataset.id) { approveReview(ap.dataset.id, ap); return; }
+  if (ap && ap.dataset.id && !ap.disabled) {
+    // Locked → open the unlock prompt and remember to continue this approve.
+    if (!unlocked) { pendingApprove = { id: ap.dataset.id }; openUnlock(); return; }
+    approveReview(ap.dataset.id, ap); return;
+  }
   const mb = e.target.closest(".modes button");
   if (mb) { setMode(mb.dataset.mode); return; }
   const sh = e.target.closest(".sect-h");
@@ -462,12 +485,21 @@ async function approveReview(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = "Approving…"; }
   try {
     // Server runs `gh pr review --approve` under the host's own gh login,
-    // gated to loopback (see /api/jobs/:id/approve). No token in the browser.
+    // gated on the privilege cookie (see /api/jobs/:id/approve). The password
+    // is never in the browser; the cookie proves this browser unlocked.
     const r = await fetch(`/api/jobs/${id}/approve`, { method: "POST" });
-    const data = await r.json();
+    const data = await r.json().catch(() => ({}));
     if (!r.ok) {
+      // Cookie expired / never set → re-prompt for the password, then retry.
+      if (r.status === 401 || data.locked) {
+        unlocked = false; updateLockChip();
+        pendingApprove = { id };
+        renderHead(rev);
+        openUnlock();
+        return;
+      }
       showToast("Couldn't approve: " + escapeHtml(data.error || `HTTP ${r.status}`));
-      if (btn) { btn.disabled = false; btn.textContent = "✓ Approve PR"; }
+      renderHead(rev);
       return;
     }
     rev.outcome = "approved";
@@ -475,9 +507,80 @@ async function approveReview(id, btn) {
     showToast("✓ Approved on GitHub.");
   } catch (e) {
     showToast("Couldn't approve: " + escapeHtml(e.message));
-    if (btn) { btn.disabled = false; btn.textContent = "✓ Approve PR"; }
+    renderHead(rev);
   }
 }
+
+// --------------------------------------------------------- privilege / lock -
+function updateLockChip() {
+  if (!lockChip) return;
+  lockChip.hidden = !passwordConfigured;
+  lockChip.textContent = unlocked ? "🔓 Unlocked" : "🔒 Locked";
+  lockChip.classList.toggle("on", unlocked);
+  lockChip.title = unlocked
+    ? "Privileged actions unlocked in this browser — click to re-lock"
+    : "Privileged actions locked — click to enter the admin password";
+}
+function setUnlocked(on) {
+  unlocked = on;
+  updateLockChip();
+  for (const r of reviews.values()) if (r.els?.head) renderHead(r);
+  clearTimeout(relockTimer);
+  if (on) relockTimer = setTimeout(() => { setUnlocked(false); showToast("🔒 Re-locked after 1 hour."); }, 60 * 60 * 1000);
+}
+function openUnlock() {
+  if (!passwordConfigured) { showToast("Approve is disabled — no admin password is set on the host."); return; }
+  unlockErr.hidden = true; unlockPass.value = "";
+  unlockPass.type = "password"; if (unlockEye) unlockEye.textContent = "👁";
+  unlockBackdrop.hidden = false;
+  setTimeout(() => unlockPass.focus(), 30);
+}
+function closeUnlock() { unlockBackdrop.hidden = true; pendingApprove = null; }
+async function submitUnlock() {
+  const password = unlockPass.value;
+  if (!password) { unlockErr.textContent = "Enter the password."; unlockErr.hidden = false; return; }
+  try {
+    const r = await fetch("/api/unlock", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      unlockErr.textContent = data.error === "incorrect password" ? "Incorrect password." : (data.error || "Couldn't unlock.");
+      unlockErr.hidden = false;
+      unlockForm.classList.remove("shake"); void unlockForm.offsetWidth; unlockForm.classList.add("shake");
+      return;
+    }
+    unlockPass.value = "";
+    unlockBackdrop.hidden = true;
+    setUnlocked(true);
+    showToast("🔓 Unlocked for 1 hour.");
+    // Continue an approve that was waiting on the password.
+    const p = pendingApprove; pendingApprove = null;
+    if (p) {
+      const btn = document.querySelector(`.review-panel.active .approve[data-id="${p.id}"]`);
+      approveReview(p.id, btn || null);
+    }
+  } catch (e) {
+    unlockErr.textContent = "Couldn't reach the server."; unlockErr.hidden = false;
+  }
+}
+async function relock() {
+  try { await fetch("/api/lock", { method: "POST" }); } catch {}
+  setUnlocked(false);
+  showToast("🔒 Locked.");
+}
+if (lockChip) lockChip.addEventListener("click", () => { if (unlocked) relock(); else openUnlock(); });
+if (unlockForm) unlockForm.addEventListener("submit", (e) => { e.preventDefault(); submitUnlock(); });
+if (unlockCancel) unlockCancel.addEventListener("click", closeUnlock);
+if (unlockEye) unlockEye.addEventListener("click", () => {
+  const show = unlockPass.type === "password";
+  unlockPass.type = show ? "text" : "password";
+  unlockEye.textContent = show ? "🙈" : "👁";
+  unlockPass.focus();
+});
+if (unlockBackdrop) unlockBackdrop.addEventListener("click", (e) => { if (e.target === unlockBackdrop) closeUnlock(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !unlockBackdrop.hidden) closeUnlock(); });
 
 async function verifyReview(id) {
   const rev = reviews.get(id);
@@ -737,7 +840,11 @@ async function loadConfig() {
     if (cfg.heroImage) document.body.style.setProperty("--hero", `url("${cfg.heroImage}")`);
     isHost = !!cfg.isHost;
     hostLogin = cfg.hostLogin || null;
+    passwordConfigured = !!cfg.passwordConfigured;
+    unlocked = !!cfg.unlocked;
     if (cfg.host) { hostName = cfg.host; hostNameEl.textContent = `on ${hostName}'s machine`; }
+    updateLockChip();
+    if (unlocked) setUnlocked(true); // (re)arm the client-side relock timer
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
     updateStatusLight();
   } catch {}

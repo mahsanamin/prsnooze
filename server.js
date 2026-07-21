@@ -3,6 +3,7 @@ const os = require("node:os");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const express = require("express");
+const crypto = require("node:crypto");
 const { execSync, execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const execFileP = promisify(execFile);
@@ -38,6 +39,12 @@ const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? 
 // How many reviews run at once. Default 1 = sequential (one at a time, no
 // concurrency). Set >1 to allow that many concurrent reviews.
 const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_REVIEWS || "1", 10));
+// Shared secret that gates privileged actions (approve). Set this on the host;
+// whoever knows it can unlock approve in their own browser. Unset = approve
+// disabled everywhere. Never sent to the client — only verified server-side.
+const ADMIN_PASSWORD = process.env.PRSNOOZE_ADMIN_PASSWORD || "";
+const PRIV_COOKIE = "prsnooze_priv";
+const PRIV_TTL_MS = 60 * 60 * 1000; // stay unlocked for 1 hour
 
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
@@ -146,25 +153,88 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// "Host" = the request came from this machine's own browser (loopback). Only
-// the host may use the manual-approve control; teammates reaching the UI over
-// the LAN get a non-loopback address. Used both to gate the UI (config) and to
-// authorize the approve endpoint server-side (defense in depth).
+// --- privileged-action gating (approve) -----------------------------------
+// A browser proves it knows PRSNOOZE_ADMIN_PASSWORD by POSTing it once to
+// /api/unlock; we hand back a signed, httpOnly cookie (a timestamp + HMAC, so
+// there is no server-side session to lose on restart). Every privileged
+// endpoint re-verifies that cookie independently. The raw password never
+// travels to the client and is never stored there after unlock.
+function signPriv(payload) {
+  return crypto.createHmac("sha256", ADMIN_PASSWORD).update(payload).digest("hex");
+}
+function makePrivToken() {
+  const issued = String(Date.now());
+  return `${issued}.${signPriv(issued)}`;
+}
+function verifyPrivToken(token) {
+  if (!ADMIN_PASSWORD || !token) return false;
+  const dot = token.lastIndexOf(".");
+  if (dot < 0) return false;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = signPriv(payload);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  const issued = parseInt(payload, 10);
+  return Number.isFinite(issued) && Date.now() - issued < PRIV_TTL_MS;
+}
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie;
+  if (!raw) return out;
+  for (const part of raw.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
+}
+function isUnlocked(req) {
+  return verifyPrivToken(parseCookies(req)[PRIV_COOKIE]);
+}
+// Constant-time password check (hash both sides so length isn't leaked).
+function passwordMatches(input) {
+  if (!ADMIN_PASSWORD || !input) return false;
+  const a = crypto.createHash("sha256").update(String(input)).digest();
+  const b = crypto.createHash("sha256").update(ADMIN_PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
+}
 function isLoopback(req) {
   const ip = req.socket.remoteAddress || "";
   return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
 }
 
 app.get("/api/config", (req, res) => {
-  const isHost = isLoopback(req);
   res.json({
     heroImage: HERO_IMAGE,
     brand: "prsnooze",
     host: HOST_NAME,
-    isHost,
+    isHost: isLoopback(req),
     hostLogin: HOST_LOGIN,
     concurrent: MAX_CONCURRENT_REVIEWS > 1,
+    // Whether approve is gated at all (a password is set on the host), and
+    // whether THIS browser is currently unlocked.
+    passwordConfigured: !!ADMIN_PASSWORD,
+    unlocked: isUnlocked(req),
   });
+});
+
+// Prove knowledge of the admin password → set the privilege cookie.
+app.post("/api/unlock", (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
+  const { password } = req.body || {};
+  if (!passwordMatches(password)) return res.status(401).json({ error: "incorrect password" });
+  // No Secure flag: must also work over http://localhost. Over the proxy it's
+  // already HTTPS end-to-end.
+  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
+  res.json({ ok: true, ttlMs: PRIV_TTL_MS });
+});
+
+// Re-lock this browser immediately.
+app.post("/api/lock", (req, res) => {
+  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  res.json({ ok: true });
 });
 
 app.post("/api/review", (req, res) => {
@@ -241,12 +311,13 @@ app.post("/api/jobs/:id/verify", (req, res) => {
   res.json({ ok: true });
 });
 
-// Approve the PR — host only. The browser can't run `gh`, so the server shells
-// out to it here. No token/env var: this reuses the host's existing `gh` login
-// (the same identity every review posts under). Gated to loopback so only the
-// host's own browser can trigger it; a LAN teammate gets 403.
+// Approve the PR — password-gated. The browser can't run `gh`, so the server
+// shells out to it here, under the host's existing `gh` login (the same
+// identity every review posts under — no token/env var for gh). The caller
+// must hold a valid privilege cookie (see /api/unlock); otherwise 401.
 app.post("/api/jobs/:id/approve", async (req, res) => {
-  if (!isLoopback(req)) return res.status(403).json({ error: "approve is host-only" });
+  if (!ADMIN_PASSWORD) return res.status(403).json({ error: "approve is disabled — no admin password configured on the host" });
+  if (!isUnlocked(req)) return res.status(401).json({ error: "locked — enter the admin password to approve", locked: true });
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   if (!job.prUrl) return res.status(400).json({ error: "no PR URL on this job" });

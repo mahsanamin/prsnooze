@@ -157,6 +157,32 @@ body::after {
 .notif-hint { font-size: 12px; color: var(--muted); }
 .queue-status { font-size: 12px; color: var(--muted); }
 
+/* privilege lock chip + unlock prompt */
+.lockchip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer; }
+.lockchip:hover { border-color: var(--accent); color: var(--text); }
+.lockchip.on { color: #86efac; border-color: rgba(134, 239, 172, 0.4); background: rgba(134, 239, 172, 0.08); }
+.lockchip[hidden] { display: none; }
+.approve.locked { background: var(--panel-2); color: var(--muted); border: 1px dashed var(--border); }
+.approve.locked:hover { color: var(--text); border-color: var(--accent); }
+.unlock-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.unlock-backdrop[hidden] { display: none; }
+.unlock-modal { width: min(92vw, 380px); background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.unlock-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.unlock-sub { font-size: 12.5px; color: var(--muted); margin: 6px 0 16px; line-height: 1.5; }
+.unlock-field { position: relative; display: flex; align-items: center; }
+.unlock-field input { flex: 1; padding: 10px 40px 10px 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 14px; }
+.unlock-field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.unlock-eye { position: absolute; right: 6px; background: none; border: none; cursor: pointer; font-size: 15px; padding: 4px; }
+.unlock-err { color: #f87171; font-size: 12.5px; margin-top: 8px; }
+.unlock-err[hidden] { display: none; }
+.unlock-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.unlock-cancel { background: none; border: 1px solid var(--border); color: var(--muted); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.unlock-cancel:hover { color: var(--text); }
+.unlock-submit { background: var(--accent); color: #1b1200; border: none; font-weight: 700; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.unlock-submit:hover { filter: brightness(1.08); }
+.unlock-modal.shake { animation: shake 0.35s; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
+
 .submit-msg { flex: 0 0 auto; padding: 0 22px; font-size: 13px; color: var(--muted); }
 .submit-msg:not(:empty) { padding: 6px 22px; }
 .submit-msg.error { color: var(--red); }

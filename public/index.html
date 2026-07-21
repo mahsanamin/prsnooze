@@ -29,6 +29,7 @@
         <button id="submit-btn" type="submit">Start review</button>
       </form>
       <div class="topbar-right">
+        <button id="lock-chip" class="lockchip" type="button" hidden></button>
         <label class="toggle" title="Play a soft chime when a review finishes">
           <input type="checkbox" id="sound-toggle" /> 🔊
         </label>
@@ -74,6 +75,22 @@
     </div>
 
     <div id="toast" class="toast" hidden></div>
+
+    <div id="unlock-backdrop" class="unlock-backdrop" hidden>
+      <form id="unlock-modal" class="unlock-modal">
+        <div class="unlock-title">🔒 Enter admin password</div>
+        <div class="unlock-sub">Set by whoever runs prsnooze. Unlocks privileged actions in this browser.</div>
+        <div class="unlock-field">
+          <input id="unlock-pass" type="password" placeholder="Admin password" autocomplete="current-password" />
+          <button id="unlock-eye" type="button" class="unlock-eye" title="Show/hide" aria-label="Show or hide password">👁</button>
+        </div>
+        <div id="unlock-err" class="unlock-err" hidden></div>
+        <div class="unlock-actions">
+          <button id="unlock-cancel" type="button" class="unlock-cancel">Cancel</button>
+          <button id="unlock-submit" type="submit" class="unlock-submit">Unlock</button>
+        </div>
+      </form>
+    </div>
 
     <script src="/app.js"></script>
   </body>
