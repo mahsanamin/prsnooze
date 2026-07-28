@@ -3,11 +3,15 @@ const os = require("node:os");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const express = require("express");
+const crypto = require("node:crypto");
+const { execSync, execFile } = require("node:child_process");
+const { promisify } = require("node:util");
+const execFileP = promisify(execFile);
 const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
-const { runReviewJob } = require("./lib/review-job");
-const { parsePrUrl } = require("./lib/github");
+const { runReviewJob, runVerifyJob } = require("./lib/review-job");
+const { parsePrUrl, getSelfLogin } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -32,6 +36,38 @@ const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "1
 const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
 const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
 const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? "true") === "true";
+// How many reviews run at once. Default 1 = sequential (one at a time, no
+// concurrency). Set >1 to allow that many concurrent reviews.
+const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_REVIEWS || "1", 10));
+// Shared secret that gates privileged actions (approve). Set this on the host;
+// whoever knows it can unlock approve in their own browser. Unset = approve
+// disabled everywhere. Never sent to the client — only verified server-side.
+const ADMIN_PASSWORD = process.env.PRSNOOZE_ADMIN_PASSWORD || "";
+const PRIV_COOKIE = "prsnooze_priv";
+const PRIV_TTL_MS = 60 * 60 * 1000; // stay unlocked for 1 hour
+
+// Who owns the machine this instance runs on — surfaced in the UI so teammates
+// know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
+const HOST_NAME = detectHost();
+// The host's gh login (for approve-rights). Resolved once at startup; null if
+// gh isn't authenticated.
+let HOST_LOGIN = null;
+getSelfLogin().then((l) => { HOST_LOGIN = l || null; }).catch(() => {});
+function detectHost() {
+  const tryCmd = (cmd) => {
+    try {
+      return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  return (
+    process.env.PRSNOOZE_HOST ||
+    tryCmd("git config user.name") ||
+    os.userInfo().username ||
+    os.hostname()
+  );
+}
 
 for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
   fs.mkdirSync(d, { recursive: true });
@@ -54,6 +90,8 @@ function pushEvent(jobId, event) {
   if (event.kind === "phase") job.phase = event.phase;
   if (event.kind === "pr_meta") job.prMeta = event;
   if (event.kind === "worktree_ready") job.worktreePath = event.path;
+  if (event.kind === "claude_started") job.claudePid = event.pid || null;
+  if (event.kind === "summary" && event.sessionId) job.sessionId = event.sessionId;
   if (event.kind === "summary") job.summary = event;
   if (event.kind === "failed") job.error = event.error;
   if (event.kind === "outcome_detected") job.outcome = event.outcome;
@@ -70,6 +108,7 @@ function pushEvent(jobId, event) {
     event.kind === "queued" ||
     event.kind === "started" ||
     event.kind === "phase" ||
+    event.kind === "claude_started" ||
     event.kind === "done" ||
     event.kind === "failed" ||
     event.kind === "summary"
@@ -78,18 +117,24 @@ function pushEvent(jobId, event) {
   }
 }
 
-const queue = new Queue((job, helpers) =>
-  runReviewJob(job, helpers, {
-    reposDir: REPOS_DIR,
-    worktreesDir: WORKTREES_DIR,
-    claudeBin: CLAUDE_BIN,
-    keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
-    autoApprove: AUTO_APPROVE,
-    autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
-    autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
-    confidenceThreshold: CONFIDENCE_THRESHOLD,
-    skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
-  }),
+const queue = new Queue(
+  (job, helpers) => {
+    const cfg = {
+      reposDir: REPOS_DIR,
+      worktreesDir: WORKTREES_DIR,
+      claudeBin: CLAUDE_BIN,
+      keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
+      autoApprove: AUTO_APPROVE,
+      autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
+      autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
+      confidenceThreshold: CONFIDENCE_THRESHOLD,
+      skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
+    };
+    return job.mode === "verify"
+      ? runVerifyJob(job, helpers, cfg)
+      : runReviewJob(job, helpers, cfg);
+  },
+  { concurrency: MAX_CONCURRENT_REVIEWS },
 );
 
 queue.on("job", ({ jobId, event }) => pushEvent(jobId, event));
@@ -108,11 +153,88 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/config", (_req, res) => {
+// --- privileged-action gating (approve) -----------------------------------
+// A browser proves it knows PRSNOOZE_ADMIN_PASSWORD by POSTing it once to
+// /api/unlock; we hand back a signed, httpOnly cookie (a timestamp + HMAC, so
+// there is no server-side session to lose on restart). Every privileged
+// endpoint re-verifies that cookie independently. The raw password never
+// travels to the client and is never stored there after unlock.
+function signPriv(payload) {
+  return crypto.createHmac("sha256", ADMIN_PASSWORD).update(payload).digest("hex");
+}
+function makePrivToken() {
+  const issued = String(Date.now());
+  return `${issued}.${signPriv(issued)}`;
+}
+function verifyPrivToken(token) {
+  if (!ADMIN_PASSWORD || !token) return false;
+  const dot = token.lastIndexOf(".");
+  if (dot < 0) return false;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = signPriv(payload);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  const issued = parseInt(payload, 10);
+  return Number.isFinite(issued) && Date.now() - issued < PRIV_TTL_MS;
+}
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie;
+  if (!raw) return out;
+  for (const part of raw.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
+}
+function isUnlocked(req) {
+  return verifyPrivToken(parseCookies(req)[PRIV_COOKIE]);
+}
+// Constant-time password check (hash both sides so length isn't leaked).
+function passwordMatches(input) {
+  if (!ADMIN_PASSWORD || !input) return false;
+  const a = crypto.createHash("sha256").update(String(input)).digest();
+  const b = crypto.createHash("sha256").update(ADMIN_PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+function isLoopback(req) {
+  const ip = req.socket.remoteAddress || "";
+  return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
+}
+
+app.get("/api/config", (req, res) => {
   res.json({
     heroImage: HERO_IMAGE,
     brand: "prsnooze",
+    host: HOST_NAME,
+    isHost: isLoopback(req),
+    hostLogin: HOST_LOGIN,
+    concurrent: MAX_CONCURRENT_REVIEWS > 1,
+    // Whether approve is gated at all (a password is set on the host), and
+    // whether THIS browser is currently unlocked.
+    passwordConfigured: !!ADMIN_PASSWORD,
+    unlocked: isUnlocked(req),
   });
+});
+
+// Prove knowledge of the admin password → set the privilege cookie.
+app.post("/api/unlock", (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
+  const { password } = req.body || {};
+  if (!passwordMatches(password)) return res.status(401).json({ error: "incorrect password" });
+  // No Secure flag: must also work over http://localhost. Over the proxy it's
+  // already HTTPS end-to-end.
+  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
+  res.json({ ok: true, ttlMs: PRIV_TTL_MS });
+});
+
+// Re-lock this browser immediately.
+app.post("/api/lock", (req, res) => {
+  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  res.json({ ok: true });
 });
 
 app.post("/api/review", (req, res) => {
@@ -167,6 +289,56 @@ app.get("/api/jobs/:id", (req, res) => {
   res.json(job);
 });
 
+// Verify fixes — re-run this job by RESUMING its original Claude session to
+// check whether the author addressed the review's comments. No new session.
+app.post("/api/jobs/:id/verify", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  const sessionId = job.sessionId || job.summary?.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ error: "no Claude session recorded for this review — run a fresh review instead" });
+  }
+  if (job.state === "running" || job.state === "queued") {
+    return res.status(409).json({ error: "this review is already running" });
+  }
+  job.mode = "verify";
+  job.resumeSessionId = sessionId;
+  job.state = "queued";
+  job.finished = false;
+  job.events.push({ ts: Date.now(), kind: "verify_restart", message: "Verify fixes — re-checking whether the comments were addressed." });
+  persistJob(job);
+  queue.enqueue(job);
+  res.json({ ok: true });
+});
+
+// Approve the PR — password-gated. The browser can't run `gh`, so the server
+// shells out to it here, under the host's existing `gh` login (the same
+// identity every review posts under — no token/env var for gh). The caller
+// must hold a valid privilege cookie (see /api/unlock); otherwise 401.
+app.post("/api/jobs/:id/approve", async (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(403).json({ error: "approve is disabled — no admin password configured on the host" });
+  if (!isUnlocked(req)) return res.status(401).json({ error: "locked — enter the admin password to approve", locked: true });
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  if (!job.prUrl) return res.status(400).json({ error: "no PR URL on this job" });
+  // Reject approving your own PR up front (gh would also refuse).
+  if (HOST_LOGIN && job.prMeta?.authorLogin && HOST_LOGIN === job.prMeta.authorLogin) {
+    return res.status(400).json({ error: "you can't approve your own PR" });
+  }
+  try {
+    // Array args (no shell) — job.prUrl was validated by parsePrUrl at creation.
+    await execFileP("gh", ["pr", "review", job.prUrl, "--approve"], { timeout: 30000 });
+    job.outcome = "approved";
+    job.events.push({ ts: Date.now(), kind: "outcome_detected", outcome: "approved" });
+    job.events.push({ ts: Date.now(), kind: "log", message: `Approved by @${HOST_LOGIN || "host"} via prsnooze.` });
+    persistJob(job);
+    res.json({ ok: true, outcome: "approved" });
+  } catch (e) {
+    const detail = (e.stderr || e.message || "").toString().trim().split("\n").slice(-3).join(" ");
+    res.status(500).json({ error: `gh approve failed: ${detail || "unknown error"}` });
+  }
+});
+
 app.get("/api/jobs/:id/events", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).end();
@@ -188,6 +360,11 @@ app.get("/api/jobs/:id/events", (req, res) => {
     return res.end();
   }
 
+  // Mark the boundary between replayed history and genuinely-live events, so
+  // the client can render the backlog without re-firing chimes/notifications
+  // (matters on reconnect and on a "Verify fixes" re-run of a finished job).
+  sendSse(res, { kind: "caught_up" });
+
   // Subscribe to live events
   if (!subscribers.has(job.id)) subscribers.set(job.id, new Set());
   subscribers.get(job.id).add(res);
@@ -202,7 +379,11 @@ app.get("/api/jobs/:id/events", (req, res) => {
   });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+// Restore past jobs from disk and reconcile anything left mid-flight by a
+// previous server that crashed or was restarted. Must run before we listen.
+hydrateJobs();
+
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`prsnooze listening on http://0.0.0.0:${PORT}`);
   console.log(`  data home: ${DATA_HOME}`);
   console.log(`  repos:     ${REPOS_DIR}`);
@@ -213,9 +394,111 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
   console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
   console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
+  console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
 });
 
+// Graceful shutdown: stop accepting connections, tell every running review to
+// terminate (which SIGTERMs its whole process group), then exit. Prevents the
+// orphaned-claude-process problem on Ctrl-C / kill / service restart.
+let shuttingDown = false;
+function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\nReceived ${sig} — stopping active reviews…`);
+  let aborted = 0;
+  for (const job of jobs.values()) {
+    if (job.state === "running" && job.abort) {
+      try {
+        job.abort.abort();
+        aborted++;
+      } catch {}
+    }
+  }
+  console.log(`  signalled ${aborted} running review(s); exiting shortly.`);
+  try {
+    server.close();
+  } catch {}
+  // Give children a moment to receive SIGTERM and unwind before we go.
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
 // --- helpers ---
+
+// Is a process with this PID currently alive (and ours to signal)?
+function isAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0); // signal 0 = existence check, doesn't actually kill
+    return true;
+  } catch (e) {
+    return e.code === "EPERM"; // exists but owned by someone else
+  }
+}
+
+// Load persisted jobs into memory on boot so the UI shows history across
+// restarts, and reconcile any job that was still "queued"/"running" when the
+// previous server died: mark it "interrupted", and if its review process is
+// somehow still alive (an orphan), signal its group to terminate.
+function hydrateJobs() {
+  let files;
+  try {
+    files = fs.readdirSync(JOBS_DIR);
+  } catch {
+    return;
+  }
+  let loaded = 0;
+  let interrupted = 0;
+  let reaped = 0;
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    let job;
+    try {
+      job = JSON.parse(fs.readFileSync(path.join(JOBS_DIR, f), "utf8"));
+    } catch {
+      continue; // skip corrupt/partial files
+    }
+    if (!job || !job.id) continue;
+
+    if (job.state === "running" || job.state === "queued") {
+      // A fresh boot means this can't still be true — the process that owned
+      // it is gone. Reap a leftover orphan if one is still running.
+      if (isAlive(job.claudePid)) {
+        try {
+          process.kill(-job.claudePid, "SIGTERM"); // negative = whole group
+        } catch {
+          try {
+            process.kill(job.claudePid, "SIGTERM");
+          } catch {}
+        }
+        reaped++;
+      }
+      job.state = "interrupted";
+      job.interruptedAt = Date.now();
+      job.claudePid = null;
+      if (!Array.isArray(job.events)) job.events = [];
+      job.events.push({
+        ts: Date.now(),
+        kind: "interrupted",
+        message: "Server restarted while this review was in progress.",
+      });
+      persistJob(job);
+      interrupted++;
+    }
+
+    jobs.set(job.id, job);
+    loaded++;
+  }
+  if (loaded) {
+    console.log(
+      `  restored ${loaded} past job(s)` +
+        (interrupted ? `, ${interrupted} interrupted` : "") +
+        (reaped ? `, ${reaped} orphan(s) reaped` : ""),
+    );
+  }
+}
+
 function sendSse(res, payload) {
   try {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);

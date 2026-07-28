@@ -222,7 +222,21 @@ To customize per project, drop a `review-pr/SKILL.md` (or `aa-review-pr/SKILL.md
 
 ## Concurrency
 
-One review at a time. Additional submissions queue FIFO. The topbar shows current queue depth.
+One review at a time by default — additional submissions queue FIFO, and the topbar shows queue depth. To review several PRs at once, set **`MAX_CONCURRENT_REVIEWS`** to the number you want (e.g. `3`). Each review gets its own worktree and Claude session; only the quick per-repo git prep (`fetch` + `worktree add`) takes turns, so same-repo reviews never race on the shared clone.
+
+## Manual approve (password-gated)
+
+prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. A manual **✓ Approve PR** button appears on any finished review that wasn't auto-approved, gated behind a shared password so it works whether you're on `localhost` or reaching prsnooze through a reverse proxy.
+
+**Setup:** set `PRSNOOZE_ADMIN_PASSWORD` in your env/`.env`. Leave it unset and approve is disabled entirely (the button explains it's off).
+
+**How it works:**
+- A **🔒 Locked** chip sits in the top bar. Click it (or a locked Approve button) to get a prompt for the admin password.
+- The password is checked **server-side only** and never sent to the browser. On success the server sets a signed, `HttpOnly` cookie (a timestamped HMAC — no server-side session, survives restarts) and the browser is **🔓 Unlocked** for 1 hour.
+- Unlock state is **per browser**: entering it in one browser doesn't unlock another, another machine, or an incognito window — each proves the password once. Cookies are also per-URL, so `localhost` and the proxy hostname unlock independently.
+- While unlocked, **✓ Approve PR** runs `gh pr review <pr-url> --approve` server-side under this machine's `gh` login (so `gh` must be installed + authenticated — no token/PAT needed). Every approve re-verifies the cookie (`POST /api/jobs/:id/approve` → 401 if locked). It's disabled for a PR you (that `gh` identity) authored, and becomes **✓ Approved** once done.
+
+Over the proxy you're on HTTPS, so the password is encrypted in transit; on plain `http://localhost` it never leaves your machine.
 
 ## File layout
 
@@ -232,7 +246,8 @@ One review at a time. Additional submissions queue FIFO. The topbar shows curren
 | `bin/docker-server` | Docker dispatcher (start/stop/ssh/login/etc) |
 | `Dockerfile` / `docker-compose.yml` | Container definition |
 | `server.js` | Express app, SSE, queue wiring, `.env` loader |
-| `lib/queue.js` | Single-worker FIFO with EventEmitter |
+| `lib/queue.js` | Concurrency-capped worker pool with EventEmitter |
+| `lib/repo-lock.js` | Per-repo serialization for git prep (safe concurrency) |
 | `lib/review-job.js` | Per-job orchestrator |
 | `lib/git-ops.js` | `gh repo clone`, `git fetch`, `git worktree add/remove` |
 | `lib/github.js` | PR URL parser + `gh pr view` wrapper |

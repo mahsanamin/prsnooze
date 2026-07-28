@@ -3,73 +3,94 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>prsnooze — your PR gets reviewed while you sleep</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>prsnooze</title>
+    <link id="favicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <div class="wrap">
     <header class="topbar">
-      <div class="brand">
-        <span class="logo">👀</span>
-        <div>
-          <h1>prsnooze</h1>
-          <p class="tagline">You snooze. We review. Drop a PR URL below.</p>
-        </div>
+      <div class="brandrow">
+        <span class="logo">
+          <svg viewBox="0 0 64 64" width="30" height="30" class="brand-svg">
+            <rect width="64" height="64" rx="15" fill="#2a241f" />
+            <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
+            <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
+          </svg>
+        </span>
+        <span class="brand-name">prsnooze</span>
+        <span class="brand-host" id="host-name"></span>
       </div>
-      <div id="queue-status" class="queue-status"></div>
+      <form id="submit-form" class="searchrow">
+        <div class="addr">
+          <span class="addr-lk">🔗</span>
+          <input id="pr-url" type="text" placeholder="Paste a GitHub PR URL to review…" autocomplete="off" />
+        </div>
+        <button id="submit-btn" type="submit">Start review</button>
+      </form>
+      <div class="topbar-right">
+        <button id="lock-chip" class="lockchip" type="button" hidden></button>
+        <label class="toggle" title="Play a soft chime when a review finishes">
+          <input type="checkbox" id="sound-toggle" /> 🔊
+        </label>
+        <span id="notif-hint" class="notif-hint"></span>
+        <span id="queue-status" class="queue-status"></span>
+      </div>
     </header>
 
-    <main>
-      <section class="hero">
-        <img
-          class="hero-img"
-          src="/heroes/sleepy-cat.svg"
-          alt="A sleepy mascot for prsnooze"
-        />
-        <div class="hero-overlay">
-          <h2>Do not disturb.</h2>
-          <p>
-            Whoever runs this prsnooze instance is <em>probably asleep</em>. The bot
-            isn't. Paste a PR URL below — it'll review the PR and post comments
-            before anyone wakes up.
-          </p>
-          <p class="hero-fineprint">
-            (the hero image is a placeholder — set <code>HERO_IMAGE</code> in <code>.env</code> to swap.)
-          </p>
-        </div>
-      </section>
+    <div id="submit-msg" class="submit-msg"></div>
 
-      <section class="submit">
-        <form id="submit-form">
-          <input
-            id="pr-url"
-            type="url"
-            name="prUrl"
-            placeholder="https://github.com/owner/repo/pull/123"
-            autocomplete="off"
-            required
-          />
-          <button id="submit-btn" type="submit">Review</button>
-        </form>
-        <div id="submit-msg" class="submit-msg"></div>
-      </section>
+    <section id="welcome-banner" class="welcome-banner" hidden>
+      <span id="welcome-text"></span>
+      <button id="welcome-dismiss" class="welcome-dismiss" title="Dismiss">✕</button>
+    </section>
 
-      <section class="active" id="active-section" hidden>
-        <div class="active-head">
-          <h2 id="active-title">Active review</h2>
-          <span id="active-state" class="badge">queued</span>
-        </div>
-        <div id="active-meta" class="active-meta"></div>
-        <ol id="active-log" class="log"></ol>
-      </section>
-
+    <div class="appcard">
+      <main class="app">
+        <aside class="sidebar">
+          <h4>Active</h4>
+          <div id="active-list" class="side-list"></div>
+          <p id="active-empty" class="side-empty">nothing running</p>
+        </aside>
+        <section class="workarea">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-eyes">
+              <svg viewBox="0 0 64 64" width="56" height="56">
+                <rect width="64" height="64" rx="15" fill="#2a241f" />
+                <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
+                <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
+              </svg>
+            </div>
+            <p>Pick a review — active on the left, history below — or paste a PR URL above to start one.</p>
+          </div>
+          <div id="panels" class="panels"></div>
+        </section>
+      </main>
       <section class="recent">
-        <h2>Recent reviews</h2>
-        <ul id="recent-list" class="recent-list">
-          <li class="empty">No reviews yet.</li>
-        </ul>
+        <div class="rlabel">Recent sessions</div>
+        <div id="recent-list" class="rlist"></div>
+        <p id="recent-empty" class="recent-empty">no reviews yet</p>
       </section>
-    </main>
+    </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <div id="unlock-backdrop" class="unlock-backdrop" hidden>
+      <form id="unlock-modal" class="unlock-modal">
+        <div class="unlock-title">🔒 Enter admin password</div>
+        <div class="unlock-sub">Set by whoever runs prsnooze. Unlocks privileged actions in this browser.</div>
+        <div class="unlock-field">
+          <input id="unlock-pass" type="password" placeholder="Admin password" autocomplete="current-password" />
+          <button id="unlock-eye" type="button" class="unlock-eye" title="Show/hide" aria-label="Show or hide password">👁</button>
+        </div>
+        <div id="unlock-err" class="unlock-err" hidden></div>
+        <div class="unlock-actions">
+          <button id="unlock-cancel" type="button" class="unlock-cancel">Cancel</button>
+          <button id="unlock-submit" type="submit" class="unlock-submit">Unlock</button>
+        </div>
+      </form>
+    </div>
 
     <script src="/app.js"></script>
   </body>
