@@ -253,6 +253,10 @@ main.app { flex: 1; min-height: 0; display: flex; }
 .panels { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .review-panel { display: none; flex: 1; flex-direction: column; min-width: 0; padding: 16px 20px; overflow-y: auto; background: rgba(12, 10, 8, 0.35); }
 .review-panel.active { display: flex; }
+/* The panel is a flex column that scrolls. Its children must NOT flex-shrink,
+   or a long Activity log gets compressed to fit (and .sect's overflow:hidden
+   clips it) instead of overflowing so the panel can scroll. */
+.review-panel > * { flex-shrink: 0; }
 
 /* ----------------------------------------------------------- panel head -- */
 .panel-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
