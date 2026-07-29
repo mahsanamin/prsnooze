@@ -458,6 +458,12 @@ function finish(rev, state) {
   const first = !rev.finished;
   rev.finished = true; rev.freshFinish = true; rev.state = state;
   if (!rev.finishedAt) rev.finishedAt = Date.now();
+  // Job is terminal — close its live SSE. A finished job's stream is closed by
+  // the server after stream_end, and EventSource auto-reconnects on that close,
+  // which reconnect-loops (surfacing as failed /events in the network tab).
+  // Skip during replay: caught_up will resume the live stream of a still-running
+  // job whose backlog happens to include an earlier terminal event (verify re-run).
+  if (!rev.replaying && rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
   renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
   if (rev.id === selectedId) { updateSubmitButton(); applyMode(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
