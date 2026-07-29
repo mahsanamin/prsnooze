@@ -157,7 +157,40 @@ queue.on("state", ({ jobId, state }) => {
 // --- HTTP ---
 const app = express();
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+
+// Serve index.html ourselves with a version stamp on the asset URLs. A reverse
+// proxy in front (e.g. openresty) may slap a long max-age on /app.js and
+// /style.css, so browsers would keep running stale JS/CSS after a deploy. The
+// HTML itself is always revalidated (max-age=0), so stamping ?v=<mtime> on the
+// asset refs guarantees a changed file is fetched fresh — through the proxy too
+// (new query = new cache key). The version only changes when a file changes.
+const PUBLIC_DIR = path.join(__dirname, "public");
+const INDEX_PATH = path.join(PUBLIC_DIR, "index.html");
+function assetVersion() {
+  try {
+    const mtimes = ["app.js", "style.css", "index.html"].map(
+      (f) => fs.statSync(path.join(PUBLIC_DIR, f)).mtimeMs,
+    );
+    return Math.floor(Math.max(...mtimes)).toString(36);
+  } catch {
+    return "1";
+  }
+}
+function serveIndex(_req, res) {
+  fs.readFile(INDEX_PATH, "utf8", (err, html) => {
+    if (err) return res.status(500).send("index read error");
+    const v = assetVersion();
+    const stamped = html
+      .replace('href="/style.css"', `href="/style.css?v=${v}"`)
+      .replace('src="/app.js"', `src="/app.js?v=${v}"`);
+    res.set("Cache-Control", "no-cache");
+    res.type("html").send(stamped);
+  });
+}
+app.get("/", serveIndex);
+app.get("/index.html", serveIndex);
+// index:false so the static handler doesn't serve the un-stamped index.html.
+app.use(express.static(PUBLIC_DIR, { index: false }));
 
 // --- privileged-action gating (approve) -----------------------------------
 // A browser proves it knows PRSNOOZE_ADMIN_PASSWORD by POSTing it once to

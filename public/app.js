@@ -413,7 +413,9 @@ function openStream(rev) {
   const es = new EventSource(`/api/jobs/${rev.id}/events`);
   rev.es = es;
   es.onmessage = (msg) => { let ev; try { ev = JSON.parse(msg.data); } catch { return; } handleEvent(rev, ev); };
-  es.onerror = () => refreshList();
+  // No refetch on error: EventSource auto-reconnects, and the job list is kept
+  // fresh by the WebSocket — so an SSE hiccup must not spam /api/jobs.
+  es.onerror = () => {};
 }
 
 function handleEvent(rev, ev) {
@@ -468,7 +470,8 @@ function finish(rev, state) {
   if (rev.id === selectedId) { updateSubmitButton(); applyMode(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   updateStatusLight();
-  refreshList();
+  // No refreshList here: the server broadcasts a fresh job-list snapshot over
+  // the WebSocket on this same state change, so the list updates without a poll.
 }
 
 // --------------------------------------------------- delegated panel clicks -
