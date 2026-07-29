@@ -423,7 +423,7 @@ function handleEvent(rev, ev) {
     case "phase": rev.phase = ev.phase; setState(rev, "running"); break;
     case "started": setState(rev, "running"); break;
     case "queued": setState(rev, "queued"); break;
-    case "pr_meta": rev.prMeta = ev; renderHead(rev); break;
+    case "pr_meta": rev.prMeta = ev; renderHead(rev); renderLists(); break;
     case "outcome_detected": rev.outcome = ev.outcome; renderHead(rev); renderSummary(rev); renderLists(); break;
     case "summary": if (ev.finalText) rev.summaryText = ev.finalText; if (ev.sessionId) rev.sessionId = ev.sessionId; renderSummary(rev); break;
     case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipReason = ev.reason; finish(rev, "done"); break;
@@ -753,26 +753,58 @@ function playChime(needsYou) {
 soundToggle.addEventListener("change", () => localStorage.setItem(LS_SOUND, soundToggle.checked ? "1" : "0"));
 
 // ------------------------------------------------------------- list refresh -
+// Apply a job-list snapshot (from the WS push, or the one-shot initial fetch).
+function applySnapshot(data) {
+  for (const j of data.jobs || []) {
+    const rev = upsertReview(j);
+    if (isActive(rev.state) && !rev.es) { ensurePanel(rev); openStream(rev); }
+    if (!rev.es) { rev.state = j.state; rev.outcome = j.outcome || rev.outcome; }
+  }
+  renderLists();
+  renderQueueStatus(data.queue);
+  maybeShowWelcome(data.jobs || []);
+  if (!selectedId) {
+    const saved = localStorage.getItem(LS_SELECTED);
+    if (saved && reviews.has(saved)) selectReview(saved);
+  }
+  emptyState.hidden = selectedId != null;
+  updateStatusLight();
+}
+
+// One-shot list fetch — used for the first paint and as an SSE-error nudge.
+// The recurring updates come over the WebSocket (connectLive), NOT by polling.
 async function refreshList() {
   try {
     const r = await fetch("/api/jobs");
-    const data = await r.json();
-    for (const j of data.jobs || []) {
-      const known = reviews.get(j.id);
-      const rev = upsertReview(j);
-      if (isActive(rev.state) && !rev.es) { ensurePanel(rev); openStream(rev); }
-      if (!rev.es) { rev.state = j.state; rev.outcome = j.outcome || rev.outcome; }
-    }
-    renderLists();
-    renderQueueStatus(data.queue);
-    maybeShowWelcome(data.jobs || []);
-    if (!selectedId) {
-      const saved = localStorage.getItem(LS_SELECTED);
-      if (saved && reviews.has(saved)) selectReview(saved);
-    }
-    emptyState.hidden = selectedId != null;
-    updateStatusLight();
+    applySnapshot(await r.json());
   } catch {}
+}
+
+// Live job-list updates over a WebSocket — replaces the old 5s /api/jobs poll.
+// The server pushes a fresh snapshot on connect and on every job state change.
+// Auto-reconnects with capped backoff; the server re-syncs us on reconnect.
+let liveWs = null;
+let liveBackoff = 1000;
+let liveReconnectTimer = null;
+function connectLive() {
+  clearTimeout(liveReconnectTimer);
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  let ws;
+  try { ws = new WebSocket(`${proto}//${location.host}/ws`); }
+  catch { scheduleLiveReconnect(); return; }
+  liveWs = ws;
+  ws.onmessage = (m) => {
+    let data; try { data = JSON.parse(m.data); } catch { return; }
+    if (data.type === "snapshot") applySnapshot(data);
+    liveBackoff = 1000; // healthy traffic resets the backoff
+  };
+  ws.onclose = () => { liveWs = null; scheduleLiveReconnect(); };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+function scheduleLiveReconnect() {
+  clearTimeout(liveReconnectTimer);
+  liveReconnectTimer = setTimeout(connectLive, liveBackoff);
+  liveBackoff = Math.min(liveBackoff * 2, 15000);
 }
 function renderQueueStatus(q) {
   if (!q) return;
@@ -858,5 +890,7 @@ soundToggle.checked = localStorage.getItem(LS_SOUND) === "1";
 updateNotifHint();
 updateStatusLight();
 loadConfig();
-refreshList();
-setInterval(refreshList, 5000);
+refreshList();   // instant first paint (one-shot fetch, not a poll)
+connectLive();   // recurring updates via WebSocket — replaces the 5s poll
+// Keep relative timestamps ("2m ago") ticking. Local re-render only — no network.
+setInterval(() => renderLists(), 60000);

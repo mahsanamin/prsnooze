@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const express = require("express");
 const crypto = require("node:crypto");
+const http = require("node:http");
+const { WebSocketServer } = require("ws");
 const { execSync, execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const execFileP = promisify(execFile);
@@ -146,6 +148,10 @@ queue.on("state", ({ jobId, state }) => {
     job.finishedAt = Date.now();
     persistJob(job);
   }
+  // Every state transition (queued/running/done/failed, incl. a brand-new
+  // job's initial "queued") pushes a fresh list snapshot to all WS clients —
+  // this is what replaces the frontend's /api/jobs poll.
+  broadcastJobs();
 });
 
 // --- HTTP ---
@@ -261,26 +267,35 @@ app.post("/api/review", (req, res) => {
   res.status(202).json({ jobId: id, prUrl: parsed.url });
 });
 
-app.get("/api/jobs", (_req, res) => {
+// Coarse per-job shape for the list view (the WS snapshot and /api/jobs share
+// this exactly, so REST and WebSocket never drift).
+function jobListItem(j) {
+  return {
+    id: j.id,
+    prUrl: j.prUrl,
+    state: j.state,
+    phase: j.phase,
+    outcome: j.outcome || null, // "approved" | "commented" | "changes_requested" | null
+    skipped: !!j.skipped,
+    skipReason: j.skipReason || null,
+    title: j.prMeta?.title,
+    number: j.prMeta?.number,
+    nameWithOwner: j.prMeta?.nameWithOwner,
+    createdAt: j.createdAt,
+    finishedAt: j.finishedAt,
+    error: j.error,
+  };
+}
+function jobsSnapshot() {
   const list = Array.from(jobs.values())
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
     .slice(0, 50)
-    .map((j) => ({
-      id: j.id,
-      prUrl: j.prUrl,
-      state: j.state,
-      phase: j.phase,
-      outcome: j.outcome || null,         // "approved" | "commented" | "changes_requested" | null
-      skipped: !!j.skipped,
-      skipReason: j.skipReason || null,
-      title: j.prMeta?.title,
-      number: j.prMeta?.number,
-      nameWithOwner: j.prMeta?.nameWithOwner,
-      createdAt: j.createdAt,
-      finishedAt: j.finishedAt,
-      error: j.error,
-    }));
-  res.json({ jobs: list, queue: queue.status() });
+    .map(jobListItem);
+  return { jobs: list, queue: queue.status() };
+}
+
+app.get("/api/jobs", (_req, res) => {
+  res.json(jobsSnapshot());
 });
 
 app.get("/api/jobs/:id", (req, res) => {
@@ -379,23 +394,60 @@ app.get("/api/jobs/:id/events", (req, res) => {
   });
 });
 
-// Restore past jobs from disk and reconcile anything left mid-flight by a
-// previous server that crashed or was restarted. Must run before we listen.
-hydrateJobs();
+// --- server + WebSocket live updates ---
+// One HTTP server carries both the REST/SSE endpoints (via `app`) and the
+// job-list WebSocket at /ws. broadcastJobs() pushes a snapshot to every
+// connected browser whenever the job list changes (see queue.on("state")),
+// which is what lets the frontend drop its /api/jobs poll.
+const server = http.createServer(app);
+let wss = null;
 
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`prsnooze listening on http://0.0.0.0:${PORT}`);
-  console.log(`  data home: ${DATA_HOME}`);
-  console.log(`  repos:     ${REPOS_DIR}`);
-  console.log(`  worktrees: ${WORKTREES_DIR}`);
-  console.log(`  outputs:   ${OUTPUTS_DIR}`);
-  console.log(`  claude:    ${CLAUDE_BIN}`);
-  console.log(`  keep wt on success: ${KEEP_WORKTREE_ON_SUCCESS}`);
-  console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
-  console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
-  console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
-  console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
-});
+function broadcastJobs() {
+  if (!wss) return;
+  const msg = JSON.stringify({ type: "snapshot", ...jobsSnapshot() });
+  for (const client of wss.clients) {
+    if (client.readyState === 1 /* OPEN */) {
+      try { client.send(msg); } catch {}
+    }
+  }
+}
+
+function attachWebSocket(srv) {
+  const w = new WebSocketServer({ server: srv, path: "/ws" });
+  w.on("connection", (client) => {
+    // Sync the newcomer immediately with the current list.
+    try { client.send(JSON.stringify({ type: "snapshot", ...jobsSnapshot() })); } catch {}
+  });
+  return w;
+}
+
+function start(port = PORT) {
+  // Restore past jobs from disk and reconcile anything left mid-flight by a
+  // previous server that crashed or was restarted. Must run before we listen.
+  hydrateJobs();
+  wss = attachWebSocket(server);
+  server.listen(port, "0.0.0.0", () => {
+    const addr = server.address();
+    console.log(`prsnooze listening on http://0.0.0.0:${addr.port}`);
+    if (require.main === module) {
+      console.log(`  data home: ${DATA_HOME}`);
+      console.log(`  repos:     ${REPOS_DIR}`);
+      console.log(`  worktrees: ${WORKTREES_DIR}`);
+      console.log(`  outputs:   ${OUTPUTS_DIR}`);
+      console.log(`  claude:    ${CLAUDE_BIN}`);
+      console.log(`  keep wt on success: ${KEEP_WORKTREE_ON_SUCCESS}`);
+      console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
+      console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
+      console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
+      console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
+    }
+  });
+  return server;
+}
+
+if (require.main === module) start();
+
+module.exports = { app, server, start, queue, jobs, jobsSnapshot, broadcastJobs };
 
 // Graceful shutdown: stop accepting connections, tell every running review to
 // terminate (which SIGTERMs its whole process group), then exit. Prevents the

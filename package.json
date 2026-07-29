@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node bin/start.js",
+    "test": "node --test",
     "check": "node bin/start.js --check",
     "start:nochecks": "node bin/start.js --no-check",
     "docker:start": "bin/docker-server start",
@@ -23,7 +24,8 @@
   },
   "dependencies": {
     "express": "^4.21.0",
-    "uuid": "^11.0.0"
+    "uuid": "^11.0.0",
+    "ws": "^8.21.1"
   },
   "engines": {
     "node": ">=20"
