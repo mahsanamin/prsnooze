@@ -87,7 +87,9 @@ if (FLAG_HELP) {
 
   console.log(`\n${c.bold}starting server${c.reset}\n`);
   // Hand off to server.js in this process so signals (Ctrl-C) work as expected.
-  require(path.join(ROOT, "server.js"));
+  // server.js only auto-listens when run directly (node server.js); required as
+  // a module it exports start(), so call it explicitly here.
+  require(path.join(ROOT, "server.js")).start();
 })().catch((e) => {
   console.error(`${c.red}startup error:${c.reset}`, e);
   process.exit(1);

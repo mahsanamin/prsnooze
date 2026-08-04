@@ -413,7 +413,9 @@ function openStream(rev) {
   const es = new EventSource(`/api/jobs/${rev.id}/events`);
   rev.es = es;
   es.onmessage = (msg) => { let ev; try { ev = JSON.parse(msg.data); } catch { return; } handleEvent(rev, ev); };
-  es.onerror = () => refreshList();
+  // No refetch on error: EventSource auto-reconnects, and the job list is kept
+  // fresh by the WebSocket — so an SSE hiccup must not spam /api/jobs.
+  es.onerror = () => {};
 }
 
 function handleEvent(rev, ev) {
@@ -423,7 +425,7 @@ function handleEvent(rev, ev) {
     case "phase": rev.phase = ev.phase; setState(rev, "running"); break;
     case "started": setState(rev, "running"); break;
     case "queued": setState(rev, "queued"); break;
-    case "pr_meta": rev.prMeta = ev; renderHead(rev); break;
+    case "pr_meta": rev.prMeta = ev; renderHead(rev); renderLists(); break;
     case "outcome_detected": rev.outcome = ev.outcome; renderHead(rev); renderSummary(rev); renderLists(); break;
     case "summary": if (ev.finalText) rev.summaryText = ev.finalText; if (ev.sessionId) rev.sessionId = ev.sessionId; renderSummary(rev); break;
     case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipReason = ev.reason; finish(rev, "done"); break;
@@ -458,11 +460,18 @@ function finish(rev, state) {
   const first = !rev.finished;
   rev.finished = true; rev.freshFinish = true; rev.state = state;
   if (!rev.finishedAt) rev.finishedAt = Date.now();
+  // Job is terminal — close its live SSE. A finished job's stream is closed by
+  // the server after stream_end, and EventSource auto-reconnects on that close,
+  // which reconnect-loops (surfacing as failed /events in the network tab).
+  // Skip during replay: caught_up will resume the live stream of a still-running
+  // job whose backlog happens to include an earlier terminal event (verify re-run).
+  if (!rev.replaying && rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
   renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
   if (rev.id === selectedId) { updateSubmitButton(); applyMode(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   updateStatusLight();
-  refreshList();
+  // No refreshList here: the server broadcasts a fresh job-list snapshot over
+  // the WebSocket on this same state change, so the list updates without a poll.
 }
 
 // --------------------------------------------------- delegated panel clicks -
@@ -753,26 +762,58 @@ function playChime(needsYou) {
 soundToggle.addEventListener("change", () => localStorage.setItem(LS_SOUND, soundToggle.checked ? "1" : "0"));
 
 // ------------------------------------------------------------- list refresh -
+// Apply a job-list snapshot (from the WS push, or the one-shot initial fetch).
+function applySnapshot(data) {
+  for (const j of data.jobs || []) {
+    const rev = upsertReview(j);
+    if (isActive(rev.state) && !rev.es) { ensurePanel(rev); openStream(rev); }
+    if (!rev.es) { rev.state = j.state; rev.outcome = j.outcome || rev.outcome; }
+  }
+  renderLists();
+  renderQueueStatus(data.queue);
+  maybeShowWelcome(data.jobs || []);
+  if (!selectedId) {
+    const saved = localStorage.getItem(LS_SELECTED);
+    if (saved && reviews.has(saved)) selectReview(saved);
+  }
+  emptyState.hidden = selectedId != null;
+  updateStatusLight();
+}
+
+// One-shot list fetch — used for the first paint and as an SSE-error nudge.
+// The recurring updates come over the WebSocket (connectLive), NOT by polling.
 async function refreshList() {
   try {
     const r = await fetch("/api/jobs");
-    const data = await r.json();
-    for (const j of data.jobs || []) {
-      const known = reviews.get(j.id);
-      const rev = upsertReview(j);
-      if (isActive(rev.state) && !rev.es) { ensurePanel(rev); openStream(rev); }
-      if (!rev.es) { rev.state = j.state; rev.outcome = j.outcome || rev.outcome; }
-    }
-    renderLists();
-    renderQueueStatus(data.queue);
-    maybeShowWelcome(data.jobs || []);
-    if (!selectedId) {
-      const saved = localStorage.getItem(LS_SELECTED);
-      if (saved && reviews.has(saved)) selectReview(saved);
-    }
-    emptyState.hidden = selectedId != null;
-    updateStatusLight();
+    applySnapshot(await r.json());
   } catch {}
+}
+
+// Live job-list updates over a WebSocket — replaces the old 5s /api/jobs poll.
+// The server pushes a fresh snapshot on connect and on every job state change.
+// Auto-reconnects with capped backoff; the server re-syncs us on reconnect.
+let liveWs = null;
+let liveBackoff = 1000;
+let liveReconnectTimer = null;
+function connectLive() {
+  clearTimeout(liveReconnectTimer);
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  let ws;
+  try { ws = new WebSocket(`${proto}//${location.host}/ws`); }
+  catch { scheduleLiveReconnect(); return; }
+  liveWs = ws;
+  ws.onmessage = (m) => {
+    let data; try { data = JSON.parse(m.data); } catch { return; }
+    if (data.type === "snapshot") applySnapshot(data);
+    liveBackoff = 1000; // healthy traffic resets the backoff
+  };
+  ws.onclose = () => { liveWs = null; scheduleLiveReconnect(); };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+function scheduleLiveReconnect() {
+  clearTimeout(liveReconnectTimer);
+  liveReconnectTimer = setTimeout(connectLive, liveBackoff);
+  liveBackoff = Math.min(liveBackoff * 2, 15000);
 }
 function renderQueueStatus(q) {
   if (!q) return;
@@ -858,5 +899,7 @@ soundToggle.checked = localStorage.getItem(LS_SOUND) === "1";
 updateNotifHint();
 updateStatusLight();
 loadConfig();
-refreshList();
-setInterval(refreshList, 5000);
+refreshList();   // instant first paint (one-shot fetch, not a poll)
+connectLive();   // recurring updates via WebSocket — replaces the 5s poll
+// Keep relative timestamps ("2m ago") ticking. Local re-render only — no network.
+setInterval(() => renderLists(), 60000);
