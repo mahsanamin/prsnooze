@@ -320,11 +320,15 @@ function jobListItem(j) {
   };
 }
 function jobsSnapshot() {
-  const list = Array.from(jobs.values())
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    .slice(0, 50)
-    .map(jobListItem);
-  return { jobs: list, queue: queue.status() };
+  const all = Array.from(jobs.values()).sort(
+    (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+  );
+  const list = all.slice(0, 50).map(jobListItem);
+  // `complete` = this snapshot is the whole job list, not the newest 50 of a
+  // longer one. The frontend only prunes rows missing from a complete snapshot,
+  // so a truncated list can't make older rows vanish from a browser that has
+  // them.
+  return { jobs: list, complete: list.length === all.length, queue: queue.status() };
 }
 
 app.get("/api/jobs", (_req, res) => {
@@ -335,6 +339,33 @@ app.get("/api/jobs/:id", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   res.json(job);
+});
+
+// Remove a finished review from the list, and from disk so it stays gone
+// across a restart. Queued/running reviews are refused: their Claude session
+// is still streaming events at this job id, and dropping the record would
+// leave those events with nowhere to land.
+app.delete("/api/jobs/:id", async (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  if (job.state === "queued" || job.state === "running") {
+    return res
+      .status(409)
+      .json({ error: "this review is still queued or running — wait for it to finish" });
+  }
+  jobs.delete(job.id);
+  // End any SSE tail on this job cleanly, rather than leaving the browser
+  // holding a stream that will never speak again.
+  for (const sub of subscribers.get(job.id) || []) {
+    sendSse(sub, { kind: "stream_end", state: "removed" });
+    try { sub.end(); } catch {}
+  }
+  subscribers.delete(job.id);
+  try {
+    await fsp.rm(path.join(JOBS_DIR, `${job.id}.json`), { force: true });
+  } catch {}
+  broadcastJobs();
+  res.json({ ok: true, id: job.id });
 });
 
 // Verify fixes — re-run this job by RESUMING its original Claude session to

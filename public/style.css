@@ -375,6 +375,11 @@ main.app { flex: 1; min-height: 0; display: flex; }
 .rrow .rtitle { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .rrow .rout { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
 .rrow .rtime { font-size: 11px; color: var(--muted); opacity: 0.7; min-width: 60px; text-align: right; flex: 0 0 auto; }
+.rrow .rdel { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 13px; line-height: 1; opacity: 0.45; cursor: pointer; transition: opacity 0.12s ease, background 0.12s ease; }
+.rrow:hover .rdel { opacity: 0.9; }
+.rrow .rdel:hover { background: rgba(239, 68, 68, 0.18); opacity: 1; }
+.rrow .rdel:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; opacity: 1; }
+.rrow .rdel:disabled { cursor: default; opacity: 0.25; background: transparent; }
 
 /* dot colors reused by active rows */
 .dot-running { color: var(--blue); }

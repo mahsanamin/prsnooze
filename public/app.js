@@ -207,7 +207,57 @@ function recentRow(r) {
     `<span class="rout">${escapeHtml(rowStateText(r))}</span>` +
     `<span class="rtime">${r.finishedAt ? relTime(r.finishedAt) : ""}</span>`;
   row.addEventListener("click", () => selectReview(r.id));
+
+  // Remove-from-list. Its own button, not the status glyph on the left — that
+  // glyph is "✗ failed" and reads like a close box, which is a trap.
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "rdel";
+  del.textContent = "🗑";
+  del.title = "Remove from this list";
+  del.setAttribute("aria-label", `Remove review #${num || r.id.slice(0, 5)} from the list`);
+  del.addEventListener("click", (e) => { e.stopPropagation(); deleteReview(r.id, del); });
+  row.appendChild(del);
   return row;
+}
+
+// Remove a finished review: server first, local state only once it agrees, so
+// a row never disappears from a list the server still has.
+async function deleteReview(id, btn) {
+  if (!reviews.has(id)) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      showToast(escapeHtml(d.error || `Couldn't remove this review (HTTP ${r.status}).`));
+      if (btn) btn.disabled = false;
+      return;
+    }
+  } catch (err) {
+    showToast(escapeHtml(`Couldn't remove this review: ${err.message}`));
+    if (btn) btn.disabled = false;
+    return;
+  }
+  dropReview(id);
+  renderLists();
+  updateSubmitButton();
+}
+
+// Tear a review out of the frontend's state: close its stream, drop its panel,
+// and let go of the selection if it was the one being viewed.
+function dropReview(id) {
+  const rev = reviews.get(id);
+  if (!rev) return;
+  try { rev.es?.close(); } catch {}
+  rev.es = null;
+  rev.els?.panel?.remove();
+  reviews.delete(id);
+  if (selectedId === id) {
+    selectedId = null;
+    localStorage.removeItem(LS_SELECTED);
+    emptyState.hidden = false;
+  }
 }
 
 function phaseShort(p) { const f = PHASES.find((x) => x.key === p); return f ? f.label : p; }
@@ -768,6 +818,17 @@ function applySnapshot(data) {
     const rev = upsertReview(j);
     if (isActive(rev.state) && !rev.es) { ensurePanel(rev); openStream(rev); }
     if (!rev.es) { rev.state = j.state; rev.outcome = j.outcome || rev.outcome; }
+  }
+  // Drop rows the server no longer has (removed here or from another browser).
+  // Only against a complete snapshot, and only finished reviews — a just-
+  // submitted one we know about locally may not be in a snapshot already in
+  // flight, and must not be pruned out from under the user.
+  if (data.complete) {
+    const live = new Set((data.jobs || []).map((j) => j.id));
+    for (const id of Array.from(reviews.keys())) {
+      const rev = reviews.get(id);
+      if (!live.has(id) && !isActive(rev.state)) dropReview(id);
+    }
   }
   renderLists();
   renderQueueStatus(data.queue);
