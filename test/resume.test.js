@@ -180,3 +180,48 @@ test("missing selfLogin degrades to timestamps, not a crash", () => {
   assert.equal(v.resumable, true, "still sees the new comment");
   assert.equal(v.signals.replyCount, 0, "but can't attribute replies to us");
 });
+
+// ---------------------------------------------------------------------------
+// resumeGate — should this resume request actually run?
+//
+// The rule worth pinning down: Force can override "already approved" and
+// "nothing new" (wanting another pass is a legitimate reason on its own), but it
+// can NEVER override a merged or closed PR. There's no PR left to review, the run
+// would die at `resolving`, and getting that far flips a finished review's state
+// to failed for nothing — which is exactly what happened once by hand.
+const { resumeGate } = require("../lib/github");
+
+test("gate: a resumable review runs without forcing", () => {
+  const g = resumeGate({ assessment: { resumable: true, code: "HAS_UPDATES", reason: "2 new commits" }, forced: false });
+  assert.equal(g.allow, true);
+  assert.equal(g.forcible, true);
+});
+
+test("gate: not resumable is refused but offers force", () => {
+  for (const code of ["APPROVED", "NOTHING_NEW", "UNKNOWN"]) {
+    const g = resumeGate({ assessment: { resumable: false, code, reason: "r" }, forced: false });
+    assert.equal(g.allow, false, `${code} refused`);
+    assert.equal(g.forcible, true, `${code} is forcible`);
+  }
+});
+
+test("gate: force overrides approved and unchanged", () => {
+  for (const code of ["APPROVED", "NOTHING_NEW", "UNKNOWN"]) {
+    const g = resumeGate({ assessment: { resumable: false, code, reason: "r" }, forced: true });
+    assert.equal(g.allow, true, `${code} forced through`);
+    assert.match(g.reason, /^forced — /);
+  }
+});
+
+test("gate: force can NOT override a merged or closed PR", () => {
+  const g = resumeGate({ assessment: { resumable: false, code: "PR_CLOSED", reason: "The PR is merged" }, forced: true });
+  assert.equal(g.allow, false, "still refused");
+  assert.equal(g.forcible, false, "and the UI is told forcing is pointless");
+  assert.match(g.reason, /merged/);
+});
+
+test("gate: force can NOT invent a session that was never recorded", () => {
+  const g = resumeGate({ assessment: { resumable: false, code: "NO_SESSION", reason: "no session" }, forced: true });
+  assert.equal(g.allow, false);
+  assert.equal(g.forcible, false);
+});
