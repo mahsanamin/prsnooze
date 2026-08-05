@@ -13,7 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
-const { parsePrUrl, getSelfLogin } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -368,23 +368,86 @@ app.delete("/api/jobs/:id", async (req, res) => {
   res.json({ ok: true, id: job.id });
 });
 
-// Verify fixes — re-run this job by RESUMING its original Claude session to
-// check whether the author addressed the review's comments. No new session.
-app.post("/api/jobs/:id/verify", (req, res) => {
+
+// --- resuming a finished review ------------------------------------------
+// A review can be picked up where it left off: the Claude session id is on the
+// job, and `claude --resume` continues that conversation instead of starting a
+// fresh read of the PR. But resuming is only worth it under some conditions —
+// the PR still open, not already approved, and something new to look at (the
+// author pushed commits, or replied to the comments we left). This works out
+// which case we're in so the UI can say so, and so a pointless run can be
+// refused rather than silently costing a Claude session.
+function reviewSessionId(job) {
+  return job.sessionId || job.summary?.sessionId || job.resumeSessionId || null;
+}
+async function assessJobResume(job) {
+  const assessment = await fetchResumeSignals(job.prUrl).then((sig) =>
+    assessResumability({
+      ...sig,
+      reviewedSha: job.prMeta?.headRefOid || "",
+      reviewedAt: job.finishedAt || 0,
+      hasSession: !!reviewSessionId(job),
+    }),
+  );
+  return assessment;
+}
+
+// Read-only: what would happen if you hit resume, and why.
+app.get("/api/jobs/:id/resume-check", async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
-  const sessionId = job.sessionId || job.summary?.sessionId;
+  if (isJobActive(job)) {
+    return res.json({ resumable: false, code: "RUNNING", reason: "This review is still running.", signals: {} });
+  }
+  try {
+    res.json(await assessJobResume(job));
+  } catch (e) {
+    res.json({ resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} });
+  }
+});
+
+function isJobActive(job) {
+  return job.state === "queued" || job.state === "running";
+}
+
+// Resume — re-run this job by RESUMING its original Claude session to
+// check whether the author addressed the review's comments. No new session.
+app.post("/api/jobs/:id/verify", async (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  const sessionId = reviewSessionId(job);
   if (!sessionId) {
     return res.status(400).json({ error: "no Claude session recorded for this review — run a fresh review instead" });
   }
-  if (job.state === "running" || job.state === "queued") {
+  if (isJobActive(job)) {
     return res.status(409).json({ error: "this review is already running" });
+  }
+  // Don't burn a Claude session on a PR that's merged, already approved, or
+  // untouched since the last look. `force` is the deliberate override, and the
+  // reason is handed back so the UI can explain the refusal.
+  if (!req.body?.force) {
+    let assessment;
+    try {
+      assessment = await assessJobResume(job);
+    } catch (e) {
+      assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
+    }
+    if (!assessment.resumable) {
+      return res.status(409).json({ error: assessment.reason, assessment });
+    }
+    job.resumeReason = assessment.reason;
   }
   job.mode = "verify";
   job.resumeSessionId = sessionId;
   job.state = "queued";
   job.finished = false;
-  job.events.push({ ts: Date.now(), kind: "verify_restart", message: "Verify fixes — re-checking whether the comments were addressed." });
+  job.events.push({
+    ts: Date.now(),
+    kind: "verify_restart",
+    message: job.resumeReason
+      ? `Resuming the review — ${job.resumeReason}`
+      : "Resuming the review — re-checking whether the comments were addressed.",
+  });
   persistJob(job);
   queue.enqueue(job);
   res.json({ ok: true });

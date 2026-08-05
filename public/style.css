@@ -534,6 +534,18 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .approve:hover:not(:disabled) { filter: brightness(1.06); }
 .approve:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.5); box-shadow: none; }
 
+/* Resume: a secondary action next to Approve. Muted when the server says the
+   run wouldn't be worth it, but never hidden — the reason is the point. */
+.resume { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 9px; border: 1px solid var(--border-2); background: var(--panel-2); color: var(--text); font-weight: 650; font-size: 13px; cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease; }
+.resume:hover { border-color: var(--accent); color: var(--accent); }
+.resume .ico { width: 14px; height: 14px; }
+.resume.muted { color: var(--faint); border-style: dashed; }
+.resume.muted:hover { color: var(--accent); border-style: solid; }
+/* order:9 keeps the reason on its own line BELOW the head's controls rather
+   than shoving the Zen/Detailed toggle down a row. */
+.resume-why { order: 9; flex: 1 1 100%; margin-top: -2px; font-size: 12px; line-height: 1.5; color: var(--faint); }
+.resume-why.yes { color: var(--green); }
+
 .modes { margin-left: auto; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8, 9, 13, 0.55); }
 .modes button { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--muted); padding: 5px 12px; font-size: 12.5px; cursor: pointer; font-weight: 600; border-radius: 7px; }
 .modes button:hover { color: var(--text); }

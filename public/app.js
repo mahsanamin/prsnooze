@@ -423,6 +423,8 @@ function selectReview(id) {
   ensurePanel(rev);
   for (const [rid, r] of reviews) if (r.els?.panel) r.els.panel.classList.toggle("active", rid === id);
   if (!rev.panelLoaded && !rev.es) loadFinishedLog(rev);
+  // Only worth asking about a finished review that has a session to resume.
+  if (rev.state === "done" && rev.sessionId && !rev.resume) loadResumeCheck(rev);
   applyMode(rev);
   renderLists();
   updateSubmitButton();
@@ -567,9 +569,27 @@ function renderHead(rev) {
       }
       head.appendChild(b);
     }
-    // Re-checking a finished review ("Verify fixes") is driven from the topbar
-    // button: selecting a review fills its URL into the search, which flips the
-    // Start-review button to Verify-fixes. See updateSubmitButton().
+    // Resume: continue the original Claude session so it can judge the author's
+    // new commits and replies against the comments it already left. Its label
+    // carries the server's verdict, so the button explains itself.
+    if (rev.sessionId) {
+      const a = rev.resume;
+      const b = document.createElement("button");
+      b.className = "resume" + (a && !a.resumable && !rev.resumeArmed ? " muted" : "");
+      b.dataset.resumeId = rev.id;
+      b.appendChild(iconEl("refresh"));
+      b.appendChild(document.createTextNode(rev.resumeArmed ? "Resume anyway" : "Resume review"));
+      b.title = rev.resumeLoading
+        ? "Checking the PR for new commits and replies…"
+        : a?.reason || "Continue this review where it left off";
+      head.appendChild(b);
+      if (a?.reason) {
+        const why = document.createElement("div");
+        why.className = "resume-why" + (a.resumable ? " yes" : "");
+        why.textContent = a.reason;
+        head.appendChild(why);
+      }
+    }
   }
   const modes = document.createElement("div");
   modes.className = "modes";
@@ -745,6 +765,10 @@ async function loadFinishedLog(rev) {
     rev.els.count.textContent = `${rev.els.log.children.length} events`;
     renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev); renderLists();
     if (rev.id === selectedId) updateSubmitButton();
+    // The session id only becomes known here, and the resume check needs it —
+    // so this is the earliest point the check can run for a review restored
+    // from disk (selectReview fires before the log is fetched).
+    if (rev.id === selectedId && rev.state === "done" && rev.sessionId && !rev.resume) loadResumeCheck(rev);
   } catch {}
 }
 
@@ -840,6 +864,13 @@ panels.addEventListener("click", (e) => {
     // Locked → open the unlock prompt and remember to continue this approve.
     if (!unlocked) { pendingApprove = { id: ap.dataset.id }; openUnlock(); return; }
     approveReview(ap.dataset.id, ap); return;
+  }
+  const rs = e.target.closest(".resume");
+  if (rs && rs.dataset.resumeId && !rs.disabled) {
+    const rev = reviews.get(rs.dataset.resumeId);
+    // Second press after a refusal is the override.
+    verifyReview(rs.dataset.resumeId, !!rev?.resumeArmed);
+    return;
   }
   const mb = e.target.closest(".modes button");
   if (mb) { setMode(mb.dataset.mode); return; }
@@ -950,19 +981,55 @@ if (unlockEye) unlockEye.addEventListener("click", () => {
 if (unlockBackdrop) unlockBackdrop.addEventListener("click", (e) => { if (e.target === unlockBackdrop) closeUnlock(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !unlockBackdrop.hidden) closeUnlock(); });
 
-async function verifyReview(id) {
+async function verifyReview(id, force = false) {
   const rev = reviews.get(id);
   if (!rev) return;
-  showToast("Verifying — resuming the original review to check your comments…");
+  showToast("Resuming the review — picking up the original session…");
   try {
-    const r = await fetch(`/api/jobs/${id}/verify`, { method: "POST" });
+    const r = await fetch(`/api/jobs/${id}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: !!force }),
+    });
     const data = await r.json();
-    if (!r.ok) { showToast("Couldn't verify: " + escapeHtml(data.error || "error")); return; }
+    if (!r.ok) {
+      // 409 means the server judged the resume pointless (merged, approved,
+      // nothing new). Show why and arm an explicit override rather than just
+      // refusing — the user may know something GitHub doesn't.
+      if (r.status === 409 && data.assessment) {
+        rev.resume = data.assessment;
+        rev.resumeArmed = true;
+        renderHead(rev);
+        showToast(escapeHtml(data.assessment.reason) + " — press Resume again to run it anyway.");
+        return;
+      }
+      showToast("Couldn't resume: " + escapeHtml(data.error || "error"));
+      return;
+    }
+    rev.resumeArmed = false;
+    rev.resume = null;
     // Reset so the resumed run streams live in place.
     if (rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
     rev.finished = false; rev.state = "running"; rev.outcome = null;
     ensurePanel(rev); openStream(rev); selectReview(id); renderLists();
-  } catch (e) { showToast("Couldn't verify: " + escapeHtml(e.message)); }
+  } catch (e) { showToast("Couldn't resume: " + escapeHtml(e.message)); }
+}
+
+// Ask the server whether resuming this review is worth it. Read-only, and its
+// answer is what the Resume button renders — so the button can say "the author
+// pushed 2 commits and replied to 3 comments" instead of just being clickable.
+async function loadResumeCheck(rev) {
+  if (!rev || rev.resumeLoading) return;
+  rev.resumeLoading = true;
+  try {
+    const r = await fetch(`/api/jobs/${rev.id}/resume-check`);
+    if (r.ok) rev.resume = await r.json();
+  } catch {
+    rev.resume = null;
+  } finally {
+    rev.resumeLoading = false;
+    renderHead(rev);
+  }
 }
 
 let toastTimer = null;
