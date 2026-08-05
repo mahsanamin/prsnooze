@@ -38,7 +38,7 @@ const unlockCancel = $("unlock-cancel");
 
 const LS_SELECTED = "prsnooze:selected";
 const LS_SOUND = "prsnooze:sound";
-const LS_MODE = "prsnooze:mode";
+const LS_ACTIVITY_OPEN = "prsnooze:activityOpen";
 const LS_LASTSEEN = "prsnooze:lastSeen";
 
 const PHASES = [
@@ -52,7 +52,10 @@ const phaseIndex = (p) => PHASES.findIndex((x) => x.key === p);
 
 const reviews = new Map();
 let selectedId = null;
-let mode = localStorage.getItem(LS_MODE) === "detailed" ? "detailed" : "zen";
+// Whether the Activity log is expanded. Remembered, because whichever way you
+// like to work is how you like to work — it replaced a Zen/Detailed toggle that
+// only ever controlled this one thing.
+let activityOpen = localStorage.getItem(LS_ACTIVITY_OPEN) === "1";
 let hostName = "";
 let isHost = false;
 let hostLogin = null;
@@ -425,7 +428,7 @@ function selectReview(id) {
   if (!rev.panelLoaded && !rev.es) loadFinishedLog(rev);
   // Only worth asking about a finished review that has a session to resume.
   if (rev.state === "done" && rev.sessionId && !rev.resume) loadResumeCheck(rev);
-  applyMode(rev);
+  applyActivityState(rev);
   renderLists();
   updateSubmitButton();
   scrollLog(rev);
@@ -444,12 +447,15 @@ function ensurePanel(rev) {
   const sect = document.createElement("div"); sect.className = "sect";
   sect.innerHTML = `<div class="sect-h" role="button" tabindex="0"><span class="chev">${svgIcon("chevron")}</span>` +
     `<span class="sect-t">Activity</span><span class="live-dot" aria-hidden="true"></span>` +
+    `<span class="sect-peek"></span>` +
     `<span class="count">0 events</span></div><div class="sect-body"><ol class="log"></ol></div>`;
   // Activity sits above the review text: while a run is live the log is the
   // thing worth watching, and the comments only exist once it's done.
   panel.append(head, submeta, stepper, stats, sect, summary);
   panels.appendChild(panel);
-  rev.els = { ...(rev.els || {}), panel, head, submeta, stepper, stats, summary, sect, log: sect.querySelector(".log"), count: sect.querySelector(".count") };
+  rev.els = { ...(rev.els || {}), panel, head, submeta, stepper, stats, summary, sect,
+    log: sect.querySelector(".log"), count: sect.querySelector(".count"), peek: sect.querySelector(".sect-peek"),
+    body: sect.querySelector(".sect-body") };
   renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev);
   return panel;
 }
@@ -570,19 +576,46 @@ function renderHead(rev) {
       head.appendChild(b);
     }
     // Resume: continue the original Claude session so it can judge the author's
-    // new commits and replies against the comments it already left. Its label
-    // carries the server's verdict, so the button explains itself.
+    // new commits and replies against the comments it already left.
+    //
+    // Always enabled. Wanting another pass is a legitimate reason on its own —
+    // including on an approved PR — so the checks inform rather than forbid:
+    // press it, and if the conditions say it's pointless you get the reason and
+    // a separate Force resume. The one thing force can't do is run against a
+    // merged or closed PR, because there is no longer a PR to review.
     if (rev.sessionId) {
       const a = rev.resume;
       const b = document.createElement("button");
-      b.className = "resume" + (a && !a.resumable && !rev.resumeArmed ? " muted" : "");
+      b.className = "resume";
       b.dataset.resumeId = rev.id;
       b.appendChild(iconEl("refresh"));
-      b.appendChild(document.createTextNode(rev.resumeArmed ? "Resume anyway" : "Resume review"));
+      b.appendChild(document.createTextNode("Resume review"));
       b.title = rev.resumeLoading
         ? "Checking the PR for new commits and replies…"
-        : a?.reason || "Continue this review where it left off";
+        : a?.resumable
+          ? a.reason
+          : "Run this review again, continuing the original session";
       head.appendChild(b);
+
+      // Force only appears once a real attempt has been refused.
+      if (rev.resumeArmed) {
+        const state = String(a?.signals?.prState || "").toUpperCase();
+        // The server is the authority on whether forcing is possible; prState is
+        // only used to word the explanation.
+        const closed = rev.resumeForcible === false || (state && state !== "OPEN");
+        const f = document.createElement("button");
+        f.className = "resume force";
+        f.dataset.forceId = rev.id;
+        f.disabled = closed;
+        f.appendChild(iconEl(closed ? "xcircle" : "refresh"));
+        f.appendChild(document.createTextNode("Force resume"));
+        f.title = closed
+          ? (state && state !== "OPEN"
+              ? `The PR is ${state.toLowerCase()} — a review can't run against it.`
+              : a?.reason || "This review can't be resumed.")
+          : "Run it again anyway, in the same session";
+        head.appendChild(f);
+      }
       if (a?.reason) {
         const why = document.createElement("div");
         why.className = "resume-why" + (a.resumable ? " yes" : "");
@@ -591,18 +624,6 @@ function renderHead(rev) {
       }
     }
   }
-  const modes = document.createElement("div");
-  modes.className = "modes";
-  for (const m of ["zen", "detailed"]) {
-    const mb = document.createElement("button");
-    mb.dataset.mode = m;
-    if (mode === m) mb.className = "on";
-    mb.appendChild(iconEl(m === "zen" ? "moon" : "wrench"));
-    mb.appendChild(document.createTextNode(m === "zen" ? "Zen" : "Detailed"));
-    mb.title = m === "zen" ? "Just the verdict" : "Verdict plus the full activity log";
-    modes.appendChild(mb);
-  }
-  head.appendChild(modes);
   renderPrLine(rev);
 }
 
@@ -708,9 +729,9 @@ function renderSummary(rev) {
       case "skipped": lead = svgIcon("skip") + escapeHtml(rev.skipReason || "Skipped."); break;
       default: lead = svgIcon("check") + "Finished.";
     }
-    // What the review actually said, in both modes. It used to be Detailed-only,
-    // which left Zen as a one-line verdict over an empty page — hiding the one
-    // thing the user came to read. Detailed adds the activity log on top.
+    // What the review actually said. This used to be hidden behind a Detailed
+    // mode, which left the default view as a one-line verdict over an empty
+    // page — hiding the one thing the user came to read.
     const notes = [];
     if (rev.outcomeDetail && rev.outcomeVerified) notes.push(`Confirmed on GitHub: ${escapeHtml(rev.outcomeDetail)}.`);
     else if (rev.outcomeVerified === false && rev.outcome !== "no_new_findings") notes.push("Not confirmed with GitHub — the outcome shown is what the run appeared to do.");
@@ -739,13 +760,32 @@ function mdLite(text) {
   return h;
 }
 
-function applyMode(rev) {
-  if (rev.els?.sect) rev.els.sect.classList.toggle("open", mode === "detailed");
+// Apply the remembered Activity state to a panel. Opening jumps to the newest
+// events — the top of a 200-line log is the least interesting part of it.
+function applyActivityState(rev) {
+  const sect = rev.els?.sect;
+  if (!sect) return;
+  sect.classList.toggle("open", activityOpen);
+  if (activityOpen) scrollLog(rev);
+  else renderPeek(rev);
 }
-function setMode(m) {
-  mode = m;
-  localStorage.setItem(LS_MODE, m);
-  for (const r of reviews.values()) { if (r.els?.head) { renderHead(r); renderSummary(r); } applyMode(r); }
+function setActivityOpen(open, rev) {
+  activityOpen = !!open;
+  localStorage.setItem(LS_ACTIVITY_OPEN, activityOpen ? "1" : "0");
+  for (const r of reviews.values()) applyActivityState(r);
+  if (rev && activityOpen) scrollLog(rev);
+}
+
+// Collapsed, the header still shows the last line of the log, so a running
+// review says what it's doing without being expanded.
+function renderPeek(rev) {
+  const peek = rev.els?.peek;
+  if (!peek) return;
+  const last = rev.els?.log?.lastElementChild;
+  const body = last?.querySelector(".ev-body");
+  const text = (body?.textContent || last?.textContent || "").replace(/\s+/g, " ").trim();
+  peek.textContent = text;
+  peek.hidden = !text;
 }
 
 async function loadFinishedLog(rev) {
@@ -850,7 +890,7 @@ function finish(rev, state) {
   // job whose backlog happens to include an earlier terminal event (verify re-run).
   if (!rev.replaying && rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
   renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
-  if (rev.id === selectedId) { updateSubmitButton(); applyMode(rev); }
+  if (rev.id === selectedId) { updateSubmitButton(); applyActivityState(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   updateStatusLight();
   // No refreshList here: the server broadcasts a fresh job-list snapshot over
@@ -865,17 +905,16 @@ panels.addEventListener("click", (e) => {
     if (!unlocked) { pendingApprove = { id: ap.dataset.id }; openUnlock(); return; }
     approveReview(ap.dataset.id, ap); return;
   }
+  const fr = e.target.closest(".resume.force");
+  if (fr && fr.dataset.forceId && !fr.disabled) { verifyReview(fr.dataset.forceId, true); return; }
   const rs = e.target.closest(".resume");
-  if (rs && rs.dataset.resumeId && !rs.disabled) {
-    const rev = reviews.get(rs.dataset.resumeId);
-    // Second press after a refusal is the override.
-    verifyReview(rs.dataset.resumeId, !!rev?.resumeArmed);
-    return;
-  }
-  const mb = e.target.closest(".modes button");
-  if (mb) { setMode(mb.dataset.mode); return; }
+  if (rs && rs.dataset.resumeId && !rs.disabled) { verifyReview(rs.dataset.resumeId, false); return; }
   const sh = e.target.closest(".sect-h");
-  if (sh) { sh.parentElement.classList.toggle("open"); }
+  if (sh) {
+    const panel = sh.closest(".review-panel");
+    const rev = panel ? reviews.get(panel.dataset.jobId) : null;
+    setActivityOpen(!sh.parentElement.classList.contains("open"), rev);
+  }
 });
 
 async function approveReview(id, btn) {
@@ -998,9 +1037,13 @@ async function verifyReview(id, force = false) {
       // refusing — the user may know something GitHub doesn't.
       if (r.status === 409 && data.assessment) {
         rev.resume = data.assessment;
+        // Force always becomes visible after a refusal — but it renders disabled
+        // when forcing can't change the answer, so the UI shows the option and
+        // why it isn't available rather than hiding it.
         rev.resumeArmed = true;
+        rev.resumeForcible = data.forcible !== false;
         renderHead(rev);
-        showToast(escapeHtml(data.assessment.reason) + " — press Resume again to run it anyway.");
+        showToast(escapeHtml(data.assessment.reason) + (data.forcible === false ? "" : " Use Force resume to run it anyway."));
         return;
       }
       showToast("Couldn't resume: " + escapeHtml(data.error || "error"));
@@ -1082,7 +1125,8 @@ function entrySpec(ev) {
     case "interrupted": return { cat: "warn", icon: "⏸", label: "interrupted", body: escapeHtml(ev.message || "interrupted") };
     case "skill_resolved": { const tag = ev.source === "project" ? "project" : ev.source === "user" ? "user" : ev.source === "bundled" ? "bundled" : ""; return { cat: "ok", icon: "🧩", label: "skill", body: `<strong>${escapeHtml(ev.name || "")}</strong> <span class="tag">${escapeHtml(tag)}</span> <span class="dim">${escapeHtml(ev.pathDisplay || ev.path || "")}</span>` }; }
     case "skill_missing": return { cat: "warn", icon: "🧩", label: "skill", body: `<strong>no project skill</strong> — generic review ${details("paths searched", (ev.attempted || []).join("\n"))}` };
-    case "approval_policy": { const v = !ev.autoApprove ? "disabled" : ev.sizeOk ? "eligible" : "blocked (size)"; return { cat: "pr", icon: "🛂", label: "approval", body: `<strong>${escapeHtml(v)}</strong> <span class="dim">${escapeHtml(ev.reason || "")}</span>` }; }
+    case "approval_policy": { const v = ev.autoApprove ? "eligible" : "disabled"; const mt = Array.isArray(ev.matchedTests) && ev.matchedTests.length > 0 ? ` <span class="tag">matched tests: ${ev.matchedTests.length}</span>` : ""; return { cat: "pr", icon: "🛂", label: "approval", body: `<strong>${escapeHtml(v)}</strong> <span class="dim">${escapeHtml(ev.reason || "")}</span>${mt}` }; }
+    case "rubric": { const tier = ev.score <= 20 ? "approve" : ev.score > 60 ? "high-risk" : "comment"; const hits = Array.isArray(ev.hits) && ev.hits.length ? ` hits=[${ev.hits.map(escapeHtml).join(",")}]` : ""; const reds = Array.isArray(ev.reducers) && ev.reducers.length ? ` reducers=[${ev.reducers.map(escapeHtml).join(",")}]` : ""; return { cat: "pr", icon: "📊", label: "rubric", body: `<strong>${escapeHtml(tier)}</strong> <span class="dim">score=${ev.score}${hits}${reds}</span>` }; }
     case "outcome_detected": return { cat: "ok", icon: "🏁", label: "outcome", body: `<strong>${escapeHtml(outcomeLabel(ev.outcome))}</strong>` };
     case "skipped": return { cat: "warn", icon: "↪", label: "skipped", body: `<strong>${escapeHtml(ev.reason || "")}</strong> <span class="dim">${escapeHtml(ev.detail || "")}</span>` };
     case "system": return { cat: "sys", icon: "•", label: "session", body: `<span class="dim">${(ev.sessionId || "").slice(0, 8)}${ev.model ? " · " + escapeHtml(ev.model) : ""}</span>` };
@@ -1120,9 +1164,20 @@ function appendLog(rev, ev) {
   li.dataset.sig = sig;
   li.innerHTML = inner;
   log.appendChild(li);
-  scrollLog(rev);
+  // Follow the tail only when already pinned to the bottom, so reading back
+  // through history isn't yanked away by new events.
+  const body = rev.els?.body;
+  const pinned = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  if (pinned) scrollLog(rev);
+  if (!activityOpen) renderPeek(rev);
 }
-function scrollLog(rev) { if (rev.id === selectedId && rev.els?.log) rev.els.log.scrollTop = rev.els.log.scrollHeight; }
+// The log scrolls inside its own box — the panel itself no longer scrolls, so a
+// 200-event review can't turn the whole page into one enormous scrollbar.
+function scrollLog(rev) {
+  const body = rev.els?.body;
+  if (!body || rev.id !== selectedId) return;
+  body.scrollTop = body.scrollHeight;
+}
 
 // ------------------------------------------------------------ status light --
 // One place that maps a review's state to how it looks. `ico` names an SVG for

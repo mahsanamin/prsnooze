@@ -13,7 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
-const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -34,8 +34,6 @@ const KEEP_WORKTREE_ON_SUCCESS = String(process.env.KEEP_WORKTREES_ON_SUCCESS ||
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const HERO_IMAGE = process.env.HERO_IMAGE || "/heroes/sleepy-cat.svg";
 const AUTO_APPROVE = String(process.env.AUTO_APPROVE ?? "true") === "true";
-const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "100", 10);
-const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
 const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
 const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? "true") === "true";
 // How many reviews run at once. Default 1 = sequential (one at a time, no
@@ -127,8 +125,6 @@ const queue = new Queue(
       claudeBin: CLAUDE_BIN,
       keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
       autoApprove: AUTO_APPROVE,
-      autoApproveMaxLines: AUTO_APPROVE_MAX_LINES,
-      autoApproveMaxFiles: AUTO_APPROVE_MAX_FILES,
       confidenceThreshold: CONFIDENCE_THRESHOLD,
       skipIfAlreadyReviewed: SKIP_IF_ALREADY_REVIEWED,
     };
@@ -260,10 +256,69 @@ app.get("/api/config", (req, res) => {
 });
 
 // Prove knowledge of the admin password → set the privilege cookie.
+// --- brute-force protection for the one password-gated endpoint ------------
+// /api/unlock is the only place a secret is checked, and it gates posting an
+// approval to GitHub as the host. Without a limit, anyone who can reach the page
+// can try passwords as fast as the network allows — and the whole point of
+// prsnooze is that the page is reachable by teammates.
+//
+// In-memory and per-IP: this is a single process on one machine, so there is no
+// shared store to coordinate with. Note that behind a reverse proxy every
+// request looks like it comes from the proxy unless `trust proxy` is set, in
+// which case a single attacker can lock the endpoint for everyone. That is the
+// deliberate trade: approve is a rare manual action, and the lockout expires.
+const UNLOCK_MAX_FAILS = 5;              // consecutive failures before locking
+const UNLOCK_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
+const UNLOCK_MAX_LOCK_MS = 30 * 60_000;  // ceiling
+const UNLOCK_FORGET_MS = 60 * 60_000;    // drop idle counters
+const unlockAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
+
+function unlockThrottle(ip) {
+  const now = Date.now();
+  // Opportunistic prune so a stream of distinct IPs can't grow this forever.
+  if (unlockAttempts.size > 1000) {
+    for (const [k, v] of unlockAttempts) if (now - v.seen > UNLOCK_FORGET_MS) unlockAttempts.delete(k);
+  }
+  const rec = unlockAttempts.get(ip);
+  if (!rec) return { blocked: false };
+  if (now - rec.seen > UNLOCK_FORGET_MS) { unlockAttempts.delete(ip); return { blocked: false }; }
+  if (rec.lockedUntil && rec.lockedUntil > now) {
+    return { blocked: true, retryAfterMs: rec.lockedUntil - now };
+  }
+  return { blocked: false };
+}
+
+function unlockFailed(ip) {
+  const now = Date.now();
+  const rec = unlockAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
+  rec.fails += 1;
+  rec.seen = now;
+  if (rec.fails >= UNLOCK_MAX_FAILS) {
+    const over = rec.fails - UNLOCK_MAX_FAILS;
+    rec.lockedUntil = now + Math.min(UNLOCK_BASE_LOCK_MS * 2 ** over, UNLOCK_MAX_LOCK_MS);
+  }
+  unlockAttempts.set(ip, rec);
+}
+
+function unlockSucceeded(ip) {
+  unlockAttempts.delete(ip);
+}
+
 app.post("/api/unlock", (req, res) => {
   if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const throttled = unlockThrottle(ip);
+  if (throttled.blocked) {
+    const secs = Math.ceil(throttled.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(secs));
+    return res.status(429).json({ error: `too many attempts — try again in ${secs}s`, retryAfterMs: throttled.retryAfterMs });
+  }
   const { password } = req.body || {};
-  if (!passwordMatches(password)) return res.status(401).json({ error: "incorrect password" });
+  if (!passwordMatches(password)) {
+    unlockFailed(ip);
+    return res.status(401).json({ error: "incorrect password" });
+  }
+  unlockSucceeded(ip);
   // No Secure flag: must also work over http://localhost. Over the proxy it's
   // already HTTPS end-to-end.
   res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
@@ -422,21 +477,25 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   if (isJobActive(job)) {
     return res.status(409).json({ error: "this review is already running" });
   }
-  // Don't burn a Claude session on a PR that's merged, already approved, or
-  // untouched since the last look. `force` is the deliberate override, and the
-  // reason is handed back so the UI can explain the refusal.
-  if (!req.body?.force) {
-    let assessment;
-    try {
-      assessment = await assessJobResume(job);
-    } catch (e) {
-      assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
-    }
-    if (!assessment.resumable) {
-      return res.status(409).json({ error: assessment.reason, assessment });
-    }
-    job.resumeReason = assessment.reason;
+  // Don't burn a Claude session on a PR that's already approved or untouched
+  // since the last look — but that's advice, not a veto: `force` overrides it,
+  // and the reason is handed back so the UI can explain what it's overriding.
+  //
+  // The one thing force cannot override is a merged or closed PR. There's no PR
+  // left to review, the run would die at `resolving` anyway (fetchPrMetadata
+  // refuses a non-OPEN PR), and getting that far would have flipped a finished
+  // review's state to failed for nothing.
+  let assessment;
+  try {
+    assessment = await assessJobResume(job);
+  } catch (e) {
+    assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
   }
+  const gate = resumeGate({ assessment, forced: !!req.body?.force });
+  if (!gate.allow) {
+    return res.status(409).json({ error: gate.reason, assessment, forcible: gate.forcible });
+  }
+  job.resumeReason = gate.reason;
   job.mode = "verify";
   job.resumeSessionId = sessionId;
   job.state = "queued";
@@ -563,7 +622,7 @@ function start(port = PORT) {
       console.log(`  outputs:   ${OUTPUTS_DIR}`);
       console.log(`  claude:    ${CLAUDE_BIN}`);
       console.log(`  keep wt on success: ${KEEP_WORKTREE_ON_SUCCESS}`);
-      console.log(`  auto-approve clean PRs: ${AUTO_APPROVE} (size cap: ≤${AUTO_APPROVE_MAX_LINES} lines / ≤${AUTO_APPROVE_MAX_FILES} files)`);
+      console.log(`  auto-approve clean PRs: ${AUTO_APPROVE}`);
       console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
       console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
       console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
