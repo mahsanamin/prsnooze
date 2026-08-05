@@ -4,7 +4,7 @@
 # baked in — log in once via `docker-server claude-login` and `docker-server
 # gh-login`; auth persists in named volumes across rebuilds.
 
-FROM node:22-slim
+FROM node:25-slim
 
 # OS deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
