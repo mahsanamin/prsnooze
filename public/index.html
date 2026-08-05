@@ -36,17 +36,23 @@
       <div id="composer-top"></div>
       <div class="topbar-right">
         <button id="lock-chip" class="lockchip" type="button" hidden></button>
-        <label class="toggle" title="Play a soft chime when a review finishes">
-          <input type="checkbox" id="sound-toggle" />
-          <svg class="ico ico-on" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M11 5 6 9H3v6h3l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" />
+        <!-- One control for "tell me when a review finishes": the chime AND the
+             desktop notification. It replaced a volume toggle sitting next to a
+             separate emoji that only reported browser permission state — two
+             glyphs for one idea, one of which wasn't even clickable. -->
+        <button id="notify-toggle" class="notify-toggle" type="button" aria-pressed="false">
+          <svg class="ico ico-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 9a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9z" />
+            <path d="M10.3 19a2 2 0 0 0 3.4 0" />
           </svg>
-          <svg class="ico ico-off" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M11 5 6 9H3v6h3l5 4V5z" /><path d="m22 9-6 6" /><path d="m16 9 6 6" />
+          <svg class="ico ico-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 9a6 6 0 0 0-9.3-5" />
+            <path d="M6.2 6.4A6 6 0 0 0 6 9c0 5-2 6.5-2 6.5h11.5" />
+            <path d="M10.3 19a2 2 0 0 0 3.4 0" />
+            <path d="M3.5 3.5l17 17" />
           </svg>
-          <span class="sr">Chime when a review finishes</span>
-        </label>
-        <span id="notif-hint" class="notif-hint"></span>
+          <span class="notify-label">Notify</span>
+        </button>
         <span id="queue-status" class="queue-status"></span>
       </div>
     </header>

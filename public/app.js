@@ -7,8 +7,7 @@ const input = $("pr-url");
 const submitBtn = $("submit-btn");
 const submitMsg = $("submit-msg");
 const hostNameEl = $("host-name");
-const soundToggle = $("sound-toggle");
-const notifHint = $("notif-hint");
+const notifyToggle = $("notify-toggle");
 const queueStatusEl = $("queue-status");
 const welcomeBanner = $("welcome-banner");
 const welcomeText = $("welcome-text");
@@ -39,7 +38,8 @@ const unlockErr = $("unlock-err");
 const unlockCancel = $("unlock-cancel");
 
 const LS_SELECTED = "prsnooze:selected";
-const LS_SOUND = "prsnooze:sound";
+// Same key as the old sound toggle, so nobody's existing preference resets.
+const LS_NOTIFY = "prsnooze:sound";
 const LS_ACTIVITY_OPEN = "prsnooze:activityOpen";
 const LS_LASTSEEN = "prsnooze:lastSeen";
 
@@ -66,6 +66,10 @@ let passwordConfigured = false;
 let unlocked = false;
 let relockTimer = null;
 let pendingApprove = null; // {id, btn} — an approve click waiting on unlock
+// "Tell me when a review finishes" — one flag for the chime and the desktop
+// notification. Declared here with the rest of the module state: playChime() and
+// the toggle's own handler are defined above the init block and both read it.
+let notifyOn = localStorage.getItem(LS_NOTIFY) === "1";
 
 const isActive = (s) => s === "queued" || s === "running";
 const isTerminal = (s) => s === "done" || s === "failed" || s === "interrupted";
@@ -127,7 +131,7 @@ input.addEventListener("input", updateSubmitButton);
 async function submitUrls(raw) {
   const urls = raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
   if (!urls.length) return;
-  requestNotifPermission();
+  if (notifyOn) requestNotifPermission();
   submitBtn.disabled = true;
   submitMsg.textContent = urls.length > 1 ? `submitting ${urls.length}…` : "submitting…";
   submitMsg.classList.remove("error");
@@ -1244,8 +1248,28 @@ function updateStatusLight() {
 }
 
 // ----------------------------------------------------------- notifications -
-function requestNotifPermission() { if (!("Notification" in window)) return; if (Notification.permission === "default") Notification.requestPermission().then(updateNotifHint); updateNotifHint(); }
-function updateNotifHint() { if (!("Notification" in window)) { notifHint.textContent = ""; return; } notifHint.textContent = Notification.permission === "granted" ? "🔔 on" : Notification.permission === "denied" ? "🔕" : ""; }
+// Turning it on asks the browser for notification permission, so the one control
+// covers both halves of "tell me when it's done". A refusal isn't fatal — the
+// chime still works — and the tooltip says so instead of leaving a dead glyph on
+// screen reporting permission state nobody asked about.
+function requestNotifPermission() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") Notification.requestPermission().then(renderNotifyToggle);
+}
+function renderNotifyToggle() {
+  notifyToggle.classList.toggle("on", notifyOn);
+  notifyToggle.setAttribute("aria-pressed", String(notifyOn));
+  const blocked = "Notification" in window && Notification.permission === "denied";
+  notifyToggle.setAttribute(
+    "aria-label",
+    notifyOn ? "Notifications on — click to turn off" : "Notifications off — click to turn on",
+  );
+  notifyToggle.title = !notifyOn
+    ? "Off — no chime or notification when a review finishes"
+    : blocked
+      ? "On — chime only; this browser has blocked desktop notifications"
+      : "On — chime and a desktop notification when a review finishes";
+}
 function notify(rev) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const m = statusMeta(rev);
@@ -1254,7 +1278,7 @@ function notify(rev) {
 }
 let audioCtx = null;
 function playChime(needsYou) {
-  if (!soundToggle.checked) return;
+  if (!notifyOn) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     const now = audioCtx.currentTime;
@@ -1267,7 +1291,12 @@ function playChime(needsYou) {
     });
   } catch {}
 }
-soundToggle.addEventListener("change", () => localStorage.setItem(LS_SOUND, soundToggle.checked ? "1" : "0"));
+notifyToggle.addEventListener("click", () => {
+  notifyOn = !notifyOn;
+  localStorage.setItem(LS_NOTIFY, notifyOn ? "1" : "0");
+  if (notifyOn) requestNotifPermission();
+  renderNotifyToggle();
+});
 
 // ------------------------------------------------------------- list refresh -
 // Apply a job-list snapshot (from the WS push, or the one-shot initial fetch).
@@ -1420,9 +1449,8 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 window.addEventListener("beforeunload", stampLastSeen);
 
 // ------------------------------------------------------------------- init ---
-soundToggle.checked = localStorage.getItem(LS_SOUND) === "1";
 placeComposer();  // before the first paint, so the composer never flashes in the wrong slot
-updateNotifHint();
+renderNotifyToggle();
 updateStatusLight();
 loadConfig();
 refreshList();   // instant first paint (one-shot fetch, not a poll)
