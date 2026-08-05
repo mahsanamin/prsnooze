@@ -34,8 +34,8 @@ const KEEP_WORKTREE_ON_SUCCESS = String(process.env.KEEP_WORKTREES_ON_SUCCESS ||
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const HERO_IMAGE = process.env.HERO_IMAGE || "/heroes/sleepy-cat.svg";
 const AUTO_APPROVE = String(process.env.AUTO_APPROVE ?? "true") === "true";
-const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "100", 10);
-const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "5", 10);
+const AUTO_APPROVE_MAX_LINES = parseInt(process.env.AUTO_APPROVE_MAX_LINES || "500", 10);
+const AUTO_APPROVE_MAX_FILES = parseInt(process.env.AUTO_APPROVE_MAX_FILES || "20", 10);
 const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
 const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? "true") === "true";
 // How many reviews run at once. Default 1 = sequential (one at a time, no
