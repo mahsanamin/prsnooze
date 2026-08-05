@@ -396,10 +396,16 @@ main.app { flex: 1; min-height: 0; display: flex; }
   overflow: hidden;
 }
 .no-sessions .rail { display: none; }
-.rail-sect { display: flex; flex-direction: column; min-height: 0; padding: 10px 10px 6px; }
+/* Running sizes to its content and never shrinks; Recent takes whatever is left
+   and scrolls. Without `flex: 0 0 auto` both sections competed for the rail's
+   height, and on a short window the running row was squashed to a sliver of
+   itself (its own list scrolling inside ~20px) instead of Recent giving way. */
+.rail-sect { display: flex; flex-direction: column; flex: 0 0 auto; min-height: 0; padding: 10px 10px 6px; }
 .rail-sect[hidden] { display: none; }
 .rail-sect + .rail-sect { border-top: 1px solid var(--border); }
-.rail-sect-grow { flex: 1 1 auto; }
+/* A long queue still can't push Recent off the rail entirely. */
+#running-sect .rail-list { max-height: 40vh; }
+.rail-sect-grow { flex: 1 1 auto; min-height: 0; }
 .rail-h {
   display: flex; align-items: center; gap: 7px;
   margin: 2px 6px 8px;
