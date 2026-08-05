@@ -396,10 +396,16 @@ main.app { flex: 1; min-height: 0; display: flex; }
   overflow: hidden;
 }
 .no-sessions .rail { display: none; }
-.rail-sect { display: flex; flex-direction: column; min-height: 0; padding: 10px 10px 6px; }
+/* Running sizes to its content and never shrinks; Recent takes whatever is left
+   and scrolls. Without `flex: 0 0 auto` both sections competed for the rail's
+   height, and on a short window the running row was squashed to a sliver of
+   itself (its own list scrolling inside ~20px) instead of Recent giving way. */
+.rail-sect { display: flex; flex-direction: column; flex: 0 0 auto; min-height: 0; padding: 10px 10px 6px; }
 .rail-sect[hidden] { display: none; }
 .rail-sect + .rail-sect { border-top: 1px solid var(--border); }
-.rail-sect-grow { flex: 1 1 auto; }
+/* A long queue still can't push Recent off the rail entirely. */
+#running-sect .rail-list { max-height: 40vh; }
+.rail-sect-grow { flex: 1 1 auto; min-height: 0; }
 .rail-h {
   display: flex; align-items: center; gap: 7px;
   margin: 2px 6px 8px;
@@ -528,6 +534,18 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .approve:hover:not(:disabled) { filter: brightness(1.06); }
 .approve:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.5); box-shadow: none; }
 
+/* Resume: a secondary action next to Approve. Muted when the server says the
+   run wouldn't be worth it, but never hidden — the reason is the point. */
+.resume { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 9px; border: 1px solid var(--border-2); background: var(--panel-2); color: var(--text); font-weight: 650; font-size: 13px; cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease; }
+.resume:hover { border-color: var(--accent); color: var(--accent); }
+.resume .ico { width: 14px; height: 14px; }
+.resume.muted { color: var(--faint); border-style: dashed; }
+.resume.muted:hover { color: var(--accent); border-style: solid; }
+/* order:9 keeps the reason on its own line BELOW the head's controls rather
+   than shoving the Zen/Detailed toggle down a row. */
+.resume-why { order: 9; flex: 1 1 100%; margin-top: -2px; font-size: 12px; line-height: 1.5; color: var(--faint); }
+.resume-why.yes { color: var(--green); }
+
 .modes { margin-left: auto; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8, 9, 13, 0.55); }
 .modes button { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--muted); padding: 5px 12px; font-size: 12.5px; cursor: pointer; font-weight: 600; border-radius: 7px; }
 .modes button:hover { color: var(--text); }
@@ -589,6 +607,7 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
   font-size: 13.5px; line-height: 1.65; color: var(--muted);
   white-space: pre-wrap; overflow-wrap: break-word;
 }
+.verdict-note { margin-top: 6px; font-size: 12px; color: var(--faint); }
 .summary-detail strong { color: var(--text); font-weight: 700; }
 .summary-detail code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 1px 5px; border-radius: 5px; background: rgba(8, 9, 13, 0.7); border: 1px solid var(--border); color: var(--tool); }
 .summary-detail a { color: var(--info); text-decoration: none; border-bottom: 1px solid rgba(166, 176, 190, 0.32); overflow-wrap: anywhere; }

@@ -13,7 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
-const { parsePrUrl, getSelfLogin } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -256,10 +256,69 @@ app.get("/api/config", (req, res) => {
 });
 
 // Prove knowledge of the admin password → set the privilege cookie.
+// --- brute-force protection for the one password-gated endpoint ------------
+// /api/unlock is the only place a secret is checked, and it gates posting an
+// approval to GitHub as the host. Without a limit, anyone who can reach the page
+// can try passwords as fast as the network allows — and the whole point of
+// prsnooze is that the page is reachable by teammates.
+//
+// In-memory and per-IP: this is a single process on one machine, so there is no
+// shared store to coordinate with. Note that behind a reverse proxy every
+// request looks like it comes from the proxy unless `trust proxy` is set, in
+// which case a single attacker can lock the endpoint for everyone. That is the
+// deliberate trade: approve is a rare manual action, and the lockout expires.
+const UNLOCK_MAX_FAILS = 5;              // consecutive failures before locking
+const UNLOCK_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
+const UNLOCK_MAX_LOCK_MS = 30 * 60_000;  // ceiling
+const UNLOCK_FORGET_MS = 60 * 60_000;    // drop idle counters
+const unlockAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
+
+function unlockThrottle(ip) {
+  const now = Date.now();
+  // Opportunistic prune so a stream of distinct IPs can't grow this forever.
+  if (unlockAttempts.size > 1000) {
+    for (const [k, v] of unlockAttempts) if (now - v.seen > UNLOCK_FORGET_MS) unlockAttempts.delete(k);
+  }
+  const rec = unlockAttempts.get(ip);
+  if (!rec) return { blocked: false };
+  if (now - rec.seen > UNLOCK_FORGET_MS) { unlockAttempts.delete(ip); return { blocked: false }; }
+  if (rec.lockedUntil && rec.lockedUntil > now) {
+    return { blocked: true, retryAfterMs: rec.lockedUntil - now };
+  }
+  return { blocked: false };
+}
+
+function unlockFailed(ip) {
+  const now = Date.now();
+  const rec = unlockAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
+  rec.fails += 1;
+  rec.seen = now;
+  if (rec.fails >= UNLOCK_MAX_FAILS) {
+    const over = rec.fails - UNLOCK_MAX_FAILS;
+    rec.lockedUntil = now + Math.min(UNLOCK_BASE_LOCK_MS * 2 ** over, UNLOCK_MAX_LOCK_MS);
+  }
+  unlockAttempts.set(ip, rec);
+}
+
+function unlockSucceeded(ip) {
+  unlockAttempts.delete(ip);
+}
+
 app.post("/api/unlock", (req, res) => {
   if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const throttled = unlockThrottle(ip);
+  if (throttled.blocked) {
+    const secs = Math.ceil(throttled.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(secs));
+    return res.status(429).json({ error: `too many attempts — try again in ${secs}s`, retryAfterMs: throttled.retryAfterMs });
+  }
   const { password } = req.body || {};
-  if (!passwordMatches(password)) return res.status(401).json({ error: "incorrect password" });
+  if (!passwordMatches(password)) {
+    unlockFailed(ip);
+    return res.status(401).json({ error: "incorrect password" });
+  }
+  unlockSucceeded(ip);
   // No Secure flag: must also work over http://localhost. Over the proxy it's
   // already HTTPS end-to-end.
   res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
@@ -364,23 +423,86 @@ app.delete("/api/jobs/:id", async (req, res) => {
   res.json({ ok: true, id: job.id });
 });
 
-// Verify fixes — re-run this job by RESUMING its original Claude session to
-// check whether the author addressed the review's comments. No new session.
-app.post("/api/jobs/:id/verify", (req, res) => {
+
+// --- resuming a finished review ------------------------------------------
+// A review can be picked up where it left off: the Claude session id is on the
+// job, and `claude --resume` continues that conversation instead of starting a
+// fresh read of the PR. But resuming is only worth it under some conditions —
+// the PR still open, not already approved, and something new to look at (the
+// author pushed commits, or replied to the comments we left). This works out
+// which case we're in so the UI can say so, and so a pointless run can be
+// refused rather than silently costing a Claude session.
+function reviewSessionId(job) {
+  return job.sessionId || job.summary?.sessionId || job.resumeSessionId || null;
+}
+async function assessJobResume(job) {
+  const assessment = await fetchResumeSignals(job.prUrl).then((sig) =>
+    assessResumability({
+      ...sig,
+      reviewedSha: job.prMeta?.headRefOid || "",
+      reviewedAt: job.finishedAt || 0,
+      hasSession: !!reviewSessionId(job),
+    }),
+  );
+  return assessment;
+}
+
+// Read-only: what would happen if you hit resume, and why.
+app.get("/api/jobs/:id/resume-check", async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
-  const sessionId = job.sessionId || job.summary?.sessionId;
+  if (isJobActive(job)) {
+    return res.json({ resumable: false, code: "RUNNING", reason: "This review is still running.", signals: {} });
+  }
+  try {
+    res.json(await assessJobResume(job));
+  } catch (e) {
+    res.json({ resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} });
+  }
+});
+
+function isJobActive(job) {
+  return job.state === "queued" || job.state === "running";
+}
+
+// Resume — re-run this job by RESUMING its original Claude session to
+// check whether the author addressed the review's comments. No new session.
+app.post("/api/jobs/:id/verify", async (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  const sessionId = reviewSessionId(job);
   if (!sessionId) {
     return res.status(400).json({ error: "no Claude session recorded for this review — run a fresh review instead" });
   }
-  if (job.state === "running" || job.state === "queued") {
+  if (isJobActive(job)) {
     return res.status(409).json({ error: "this review is already running" });
+  }
+  // Don't burn a Claude session on a PR that's merged, already approved, or
+  // untouched since the last look. `force` is the deliberate override, and the
+  // reason is handed back so the UI can explain the refusal.
+  if (!req.body?.force) {
+    let assessment;
+    try {
+      assessment = await assessJobResume(job);
+    } catch (e) {
+      assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
+    }
+    if (!assessment.resumable) {
+      return res.status(409).json({ error: assessment.reason, assessment });
+    }
+    job.resumeReason = assessment.reason;
   }
   job.mode = "verify";
   job.resumeSessionId = sessionId;
   job.state = "queued";
   job.finished = false;
-  job.events.push({ ts: Date.now(), kind: "verify_restart", message: "Verify fixes — re-checking whether the comments were addressed." });
+  job.events.push({
+    ts: Date.now(),
+    kind: "verify_restart",
+    message: job.resumeReason
+      ? `Resuming the review — ${job.resumeReason}`
+      : "Resuming the review — re-checking whether the comments were addressed.",
+  });
   persistJob(job);
   queue.enqueue(job);
   res.json({ ok: true });
