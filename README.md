@@ -151,9 +151,7 @@ Defaults live in `.env.example`. Anything in `.env` overrides them.
 | `OUTPUTS_DIR` | `$PRSNOOZE_HOME/outputs` | Where job state is persisted |
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | If `true`, keep worktrees after a successful review |
 | `CLAUDE_BIN` | `claude` | Path to the claude CLI |
-| `AUTO_APPROVE` | `true` | If `true`, the reviewer **approves** PRs that are small, clean, and low-risk. Otherwise the review is posted via `--comment`. |
-| `AUTO_APPROVE_MAX_LINES` | `100` | Max **production** lines (`additions + deletions`, test files excluded). Over this, review-only. |
-| `AUTO_APPROVE_MAX_FILES` | `5` | Max **production** files changed. Over this, review-only. |
+| `AUTO_APPROVE` | `true` | If `true`, the reviewer **approves** PRs whose risk score is ≤20 and have no critical/major findings. See [How auto-approval decides](#how-auto-approval-decides). If `false`, every review is `--comment`. |
 | `CONFIDENCE_THRESHOLD` | `80` | Noise filter: findings below this confidence are dropped. The project's review skill takes precedence if it defines its own filter. Set `0` to disable. |
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | If your gh user already posted a review on the same commit SHA, skip without spawning Claude. Prevents accidental double-reviews on resubmits. |
 | `HERO_IMAGE` | `/heroes/sleepy-cat.svg` | Landscape image on the home page (path or URL) |
@@ -163,23 +161,57 @@ Defaults live in `.env.example`. Anything in `.env` overrides them.
 Auto-approve fires (`gh pr review --approve`) only when **all** of the following hold:
 
 1. `AUTO_APPROVE=true` in your config.
-2. The PR is small **in production code**: `prodAdditions + prodDeletions ≤ AUTO_APPROVE_MAX_LINES` **and** `prodFiles ≤ AUTO_APPROVE_MAX_FILES`. Test files are filtered out before the count (see [test-file detection](#test-file-detection)). This is a server-side hard guard: the reviewer is told "do not approve" if either cap is exceeded, regardless of what it finds.
-3. The reviewer found no critical and no major issues.
-4. The reviewer sees **none** of these criticality red flags in the diff:
-   - auth / authn / authz / sessions / tokens / credentials
-   - payments / billing / money handling
-   - DB schema, migrations, data-shape changes
-   - CI/CD, build scripts, deployment configs
-   - public-API removal or signature change
-   - non-trivial refactor that changes call-site behavior
-   - adding, removing, or version-bumping a dependency
-   - anything where regression risk cannot be bounded from the diff
+2. The reviewer found no critical and no major issues.
+3. The **risk score** (computed by the reviewer from the diff) is ≤ 20.
 
-If any of the above fails, the review is still posted, just as `--comment` instead of `--approve`. The web UI shows whether auto-approval was eligible, blocked by size, or disabled, plus the prod/test breakdown.
+The reviewer walks a rubric in the prompt:
+
+**Step 1 — Detect red-flag hits (real behavior changes, not adjacency).**
+A typo fix in an auth file is *not* an auth hit. A permission-check change *is*. Same idea for migrations (SQL comment vs. new DDL), refactors (rename vs. behavior change), dep bumps (patch vs. major).
+
+**Step 2 — Score the hits.**
+
+| Category | Weight |
+|---|---|
+| Auth / payments / DB migration (real behavior change) | +50 each |
+| CI/CD, public-API break | +30 each |
+| Real refactor | +20 |
+| New endpoint / public API added | +20 |
+| Dep bump — major / minor / patch | +25 / +10 / +2 |
+| Unbounded blast radius (per unclear scope) | +15 |
+
+Reducers (subtract from score):
+
+| Signal | Reduction |
+|---|---|
+| Diff is comments / formatting / renames only | −25 |
+| Diff is test-files or docs only | −20 |
+| Matching-name test files also changed (`Foo.java`↔`FooTest.java`, `foo.ts`↔`foo.test.ts`, etc.) | −15 |
+| New tests added exercising the changed paths | −10 |
+
+**Reducer cap:** if any of auth/payments/DB-migration fired, reducers can subtract at most −20 total. A real top-3 change never auto-approves.
+
+**Step 3 — Decide.**
+
+| Score | Action |
+|---|---|
+| ≤ 20 | `gh pr review --approve` |
+| 21 – 60 | `gh pr review --comment` |
+| > 60 | `gh pr review --comment` with a ⚠️ **high-risk** banner in the body |
+
+Findings override the score: any critical/major finding forces `--comment` regardless of score.
+
+The reviewer emits a rubric line the UI parses:
+
+```
+APPROVAL: comment — score=50, hits=[T1], reducers=[]
+```
+
+**Override — "when in doubt, comment."** If the reviewer is uncertain whether a change is a real hit vs. adjacency, or whether the blast radius is bounded, it errs toward hitting it and toward unbounded.
 
 #### Test-file detection
 
-A file is classified as **test code** (and therefore excluded from the size cap) if its path matches any of:
+A file is classified as **test code** (used for the prod/test breakdown shown in the UI, and for the matching-name test reducer) if its path matches any of:
 
 - `tests/`, `test/`, `__tests__/`, `spec/`, `e2e/`, `cypress/`, `integration-tests/`, `src/test/`
 - `*.test.{js,jsx,ts,tsx,mjs,cjs}`, `*.spec.{js,jsx,ts,tsx,mjs,cjs}`
@@ -233,6 +265,7 @@ prsnooze deliberately doesn't auto-approve risky or large PRs — those come bac
 **How it works:**
 - A **🔒 Locked** chip sits in the top bar. Click it (or a locked Approve button) to get a prompt for the admin password.
 - The password is checked **server-side only** and never sent to the browser. On success the server sets a signed, `HttpOnly` cookie (a timestamped HMAC — no server-side session, survives restarts) and the browser is **🔓 Unlocked** for 1 hour.
+- Wrong guesses are **rate-limited per IP** — 5 consecutive failures locks the endpoint, doubling from 1 minute up to 30, and the correct password is refused while locked. Without this, a shared password on a page teammates can reach is guessable at network speed.
 - Unlock state is **per browser**: entering it in one browser doesn't unlock another, another machine, or an incognito window — each proves the password once. Cookies are also per-URL, so `localhost` and the proxy hostname unlock independently.
 - While unlocked, **✓ Approve PR** runs `gh pr review <pr-url> --approve` server-side under this machine's `gh` login (so `gh` must be installed + authenticated — no token/PAT needed). Every approve re-verifies the cookie (`POST /api/jobs/:id/approve` → 401 if locked). It's disabled for a PR you (that `gh` identity) authored, and becomes **✓ Approved** once done.
 
