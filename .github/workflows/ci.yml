@@ -1,0 +1,59 @@
+# Tests and a dependency-vulnerability gate on every pull request.
+#
+# The `audit` job is the thing that actually refuses a PR carrying a vulnerable
+# dependency — Dependabot only opens PRs against this repo's own deps, it never
+# inspects an incoming one. Make this check required in branch protection for it
+# to block a merge rather than just report.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push supersedes the run in flight for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json declares node >=20, so prove both the floor and current.
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # `npm ci` installs exactly the lockfile — a PR that edits package.json
+      # without regenerating the lock fails here, which is the intent.
+      - run: npm ci
+      - run: npm test
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Fails the PR on a moderate-or-worse advisory in the resolved tree. Set
+      # to `high` if moderate turns out to be too noisy for this repo — but
+      # prefer fixing or, when a fix genuinely doesn't exist yet, recording the
+      # exception here in the diff where a reviewer can see it.
+      - name: npm audit (moderate and above)
+        run: npm audit --audit-level=moderate
+      # Verifies the registry signatures on what was installed, which catches a
+      # tampered or unsigned package that `audit` alone would not.
+      - name: verify package signatures
+        run: npm audit signatures

@@ -1,0 +1,44 @@
+# Dependabot keeps this repo's own dependencies current and opens PRs when one
+# of them has a published advisory.
+#
+# Note what this does NOT do: it does not scan an incoming pull request. Nothing
+# here can fail someone else's PR. The check that refuses a PR carrying a
+# vulnerable dependency is the `audit` job in .github/workflows/ci.yml — see the
+# comment there.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # One PR for the routine bumps instead of five. Security fixes are still
+    # opened on their own, immediately, regardless of this schedule.
+    groups:
+      npm-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+      include: scope
+
+  # The workflows below pin actions by major version; this keeps those current,
+  # which matters because a compromised action runs with the repo's token.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+
+  # The image ships node + git + gh + Claude Code, so its base image ages into
+  # CVEs like anything else.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: docker
