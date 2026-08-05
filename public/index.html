@@ -13,32 +13,52 @@
       <div class="brandrow">
         <span class="logo">
           <svg viewBox="0 0 64 64" width="30" height="30" class="brand-svg">
-            <rect width="64" height="64" rx="15" fill="#2a241f" />
-            <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
-            <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
+            <rect width="64" height="64" rx="15" fill="#171c33" stroke="#2b3358" />
+            <ellipse cx="24" cy="34" rx="9" ry="11" fill="#eaeefb" /><circle cx="24" cy="36" r="4.6" fill="#0d1020" />
+            <ellipse cx="42" cy="34" rx="9" ry="11" fill="#eaeefb" /><circle cx="42" cy="36" r="4.6" fill="#0d1020" />
           </svg>
         </span>
         <span class="brand-name">prsnooze</span>
         <span class="brand-host" id="host-name"></span>
       </div>
-      <form id="submit-form" class="searchrow">
-        <div class="addr">
-          <span class="addr-lk">🔗</span>
-          <input id="pr-url" type="text" placeholder="Paste a GitHub PR URL to review…" autocomplete="off" />
-        </div>
-        <button id="submit-btn" type="submit">Start review</button>
-      </form>
+      <!-- Composer slot. The composer itself lives here while a review is on
+           screen, and moves into #composer-hero when there's nothing to look
+           at — starting a review is the point of this tool, so with an idle
+           screen it gets the whole stage. See placeComposer() in app.js. -->
+      <div id="composer-top"></div>
       <div class="topbar-right">
         <button id="lock-chip" class="lockchip" type="button" hidden></button>
         <label class="toggle" title="Play a soft chime when a review finishes">
-          <input type="checkbox" id="sound-toggle" /> 🔊
+          <input type="checkbox" id="sound-toggle" />
+          <svg class="ico ico-on" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M11 5 6 9H3v6h3l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" />
+          </svg>
+          <svg class="ico ico-off" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M11 5 6 9H3v6h3l5 4V5z" /><path d="m22 9-6 6" /><path d="m16 9 6 6" />
+          </svg>
+          <span class="sr">Chime when a review finishes</span>
         </label>
         <span id="notif-hint" class="notif-hint"></span>
         <span id="queue-status" class="queue-status"></span>
       </div>
     </header>
 
-    <div id="submit-msg" class="submit-msg"></div>
+    <!-- The composer: one node, two homes (#composer-top / #composer-hero). -->
+    <div id="composer" class="composer-wrap">
+      <form id="submit-form" class="composer">
+        <div class="addr">
+          <span class="addr-lk" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M9.6 14.4a4 4 0 0 0 5.66 0l3.3-3.3a4 4 0 0 0-5.66-5.66l-.7.7" />
+              <path d="M14.4 9.6a4 4 0 0 0-5.66 0l-3.3 3.3a4 4 0 0 0 5.66 5.66l.7-.7" />
+            </svg>
+          </span>
+          <input id="pr-url" type="text" placeholder="Paste a GitHub PR URL…" autocomplete="off" spellcheck="false" />
+        </div>
+        <button id="submit-btn" type="submit">Start review</button>
+      </form>
+      <div id="submit-msg" class="submit-msg"></div>
+    </div>
 
     <section id="welcome-banner" class="welcome-banner" hidden>
       <span id="welcome-text"></span>
@@ -47,30 +67,53 @@
 
     <div class="appcard">
       <main class="app">
-        <aside class="sidebar">
-          <h4>Active</h4>
-          <div id="active-list" class="side-list"></div>
-          <p id="active-empty" class="side-empty">nothing running</p>
+        <!-- One rail holds every session, running and finished. It used to be a
+             running-only sidebar plus a full-width band pinned to the bottom of
+             the window; the band read as a stray row and left the middle of the
+             screen empty. -->
+        <aside class="rail" id="rail">
+          <section class="rail-sect" id="running-sect">
+            <h2 class="rail-h">Running <span class="rail-n" id="active-n"></span></h2>
+            <div id="active-list" class="rail-list"></div>
+            <p id="active-empty" class="rail-empty" hidden>nothing running</p>
+          </section>
+          <section class="rail-sect rail-sect-grow">
+            <h2 class="rail-h">Recent</h2>
+            <div id="recent-list" class="rail-list"></div>
+            <p id="recent-empty" class="rail-empty">No reviews yet — paste a PR URL to start one.</p>
+          </section>
         </aside>
         <section class="workarea">
           <div id="empty-state" class="empty-state">
-            <div class="empty-eyes">
-              <svg viewBox="0 0 64 64" width="56" height="56">
-                <rect width="64" height="64" rx="15" fill="#2a241f" />
-                <ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="24" cy="36" r="4.6" fill="#1b1815" />
-                <ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0" /><circle cx="42" cy="36" r="4.6" fill="#1b1815" />
-              </svg>
+            <div class="hero-stage">
+              <div class="empty-eyes">
+                <span class="zzz" aria-hidden="true"><i>z</i><i>z</i><i>z</i></span>
+                <svg viewBox="0 0 64 64" width="66" height="66" class="eyes-svg" role="img" aria-label="prsnooze">
+                  <rect width="64" height="64" rx="16" fill="#171c33" stroke="#2b3358" />
+                  <g class="eye">
+                    <ellipse cx="24" cy="34" rx="9" ry="11" fill="#eceffc" />
+                    <circle cx="24" cy="36" r="4.6" fill="#0d1020" />
+                  </g>
+                  <g class="eye eye-r">
+                    <ellipse cx="42" cy="34" rx="9" ry="11" fill="#eceffc" />
+                    <circle cx="42" cy="36" r="4.6" fill="#0d1020" />
+                  </g>
+                </svg>
+              </div>
+              <h1 class="hero-h">Paste a PR.<br /><em>Go back to sleep.</em></h1>
+              <p class="hero-sub">
+                It reads the diff against this project's own review standards and posts
+                the comments straight to GitHub<span id="hero-host"></span>.
+              </p>
+              <div id="composer-hero"></div>
+              <p class="hero-hint">
+                <kbd>Enter</kbd> to start · paste several URLs at once, separated by spaces
+              </p>
             </div>
-            <p>Pick a review — active on the left, history below — or paste a PR URL above to start one.</p>
           </div>
           <div id="panels" class="panels"></div>
         </section>
       </main>
-      <section class="recent">
-        <div class="rlabel">Recent sessions</div>
-        <div id="recent-list" class="rlist"></div>
-        <p id="recent-empty" class="recent-empty">no reviews yet</p>
-      </section>
     </div>
     </div>
 
@@ -78,11 +121,20 @@
 
     <div id="unlock-backdrop" class="unlock-backdrop" hidden>
       <form id="unlock-modal" class="unlock-modal">
-        <div class="unlock-title">🔒 Enter admin password</div>
+        <div class="unlock-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <rect x="4" y="10.5" width="16" height="10.5" rx="2" /><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+          </svg>
+          Enter admin password
+        </div>
         <div class="unlock-sub">Set by whoever runs prsnooze. Unlocks privileged actions in this browser.</div>
         <div class="unlock-field">
           <input id="unlock-pass" type="password" placeholder="Admin password" autocomplete="current-password" />
-          <button id="unlock-eye" type="button" class="unlock-eye" title="Show/hide" aria-label="Show or hide password">👁</button>
+          <button id="unlock-eye" type="button" class="unlock-eye" title="Show/hide" aria-label="Show or hide password">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" />
+            </svg>
+          </button>
         </div>
         <div id="unlock-err" class="unlock-err" hidden></div>
         <div class="unlock-actions">

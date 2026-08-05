@@ -17,6 +17,13 @@ const activeList = $("active-list");
 const activeEmpty = $("active-empty");
 const recentList = $("recent-list");
 const recentEmpty = $("recent-empty");
+const rail = $("rail");
+const runningSect = $("running-sect");
+const activeN = $("active-n");
+const composer = $("composer");
+const composerTop = $("composer-top");
+const composerHero = $("composer-hero");
+const heroHost = $("hero-host");
 const panels = $("panels");
 const emptyState = $("empty-state");
 const faviconEl = $("favicon");
@@ -57,6 +64,47 @@ let pendingApprove = null; // {id, btn} — an approve click waiting on unlock
 
 const isActive = (s) => s === "queued" || s === "running";
 const isTerminal = (s) => s === "done" || s === "failed" || s === "interrupted";
+
+// --------------------------------------------------------------- icons ------
+// Stroke icons (Lucide shapes) instead of emoji. Emoji render differently on
+// every OS, can't take currentColor, and are what made the chrome look
+// unfinished. Anything decorative is aria-hidden; meaning is carried by
+// adjacent text or an aria-label.
+const ICON_PATHS = {
+  play: '<path d="M7 4.5v15l12-7.5-12-7.5z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.2 2"/>',
+  check: '<path d="m4.5 12.5 5 5 10-11"/>',
+  comment: '<path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.4-4.4A8 8 0 0 1 13 4a8 8 0 0 1 8 8z"/>',
+  alert: '<path d="M12 4 2.5 20.5h19L12 4z"/><path d="M12 10v4.5"/><path d="M12 17.6v.01"/>',
+  xcircle: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/>',
+  pause: '<rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/>',
+  skip: '<path d="M5 6.5 13 12l-8 5.5V6.5z"/><path d="M17 6v12"/>',
+  circle: '<circle cx="12" cy="12" r="8.5"/>',
+  trash: '<path d="M4 7.5h16"/><path d="M9.5 7.5V5.4A1.4 1.4 0 0 1 11 4h2a1.4 1.4 0 0 1 1.5 1.4v2.1"/><path d="M6.5 7.5 7.4 19a1.5 1.5 0 0 0 1.5 1.4h6.2A1.5 1.5 0 0 0 16.6 19l.9-11.5"/>',
+  external: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V7.5A1.5 1.5 0 0 1 5 6h4.5"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>',
+  wrench: '<path d="M14.5 6.2a3.8 3.8 0 0 1 5.2 5.2l-2.4-2.4-2.8 2.8-2.4-2.4 2.8-2.8-.4-.4z"/><path d="m12.3 11.5-7.2 7.2a1.8 1.8 0 0 0 2.5 2.5l7.2-7.2"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
+  lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8.2 10.5V7.2a3.8 3.8 0 0 1 7.6 0v3.3"/>',
+  refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.5h-4.5"/>',
+  branch: '<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M6.5 8.5v7"/><path d="M15 9.6a5.5 5.5 0 0 1-5.4 4.5"/>',
+  diff: '<path d="M6 3.5v17"/><path d="M3.5 6h5"/><path d="M18 20.5v-17"/><path d="M15.5 18h5"/>',
+  timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.5 1.6"/><path d="M9.5 2.5h5"/>',
+  turns: '<path d="M4 8h11a4 4 0 0 1 0 8H8"/><path d="m10.5 13-2.5 3 2.5 3"/>',
+  coin: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8a2.6 2.6 0 0 0-2.5-1.3c-1.5 0-2.6.8-2.6 2s1 1.7 2.6 2 2.6.8 2.6 2-1.1 2-2.6 2a2.7 2.7 0 0 1-2.5-1.3"/>',
+  files: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5z"/><path d="M13.8 3.6V8h4.6"/>',
+};
+function svgIcon(name, cls = "") {
+  return `<svg class="ico${cls ? " " + cls : ""}" viewBox="0 0 24 24" width="16" height="16" fill="none"` +
+    ` stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `${ICON_PATHS[name] || ICON_PATHS.circle}</svg>`;
+}
+function iconEl(name, cls) {
+  const span = document.createElement("span");
+  span.className = "ico-wrap";
+  span.innerHTML = svgIcon(name, cls); // fixed template, no user data
+  return span.firstChild;
+}
 
 // ---------------------------------------------------------------- submit ----
 
@@ -113,12 +161,13 @@ function updateSubmitButton() {
   // fixes" and resumes that session; otherwise it starts a fresh review.
   const rev = findVerifiable(input.value);
   if (rev) {
-    submitBtn.textContent = "↻ Verify fixes";
-    submitBtn.title = "Resume the original review to check if the comments were addressed";
+    submitBtn.textContent = "Review PR";
+    submitBtn.prepend(iconEl("refresh"));
+    submitBtn.title = "Review this PR again — resumes the earlier session so it can check whether the comments were addressed";
     submitBtn.dataset.verifyId = rev.id;
   } else {
-    submitBtn.textContent = "Start review";
-    submitBtn.title = "";
+    submitBtn.textContent = "Review PR";
+    submitBtn.title = "Start a review of this PR";
     delete submitBtn.dataset.verifyId;
   }
   submitBtn.disabled = false;
@@ -151,6 +200,7 @@ function upsertReview(data) {
       id: data.id, prUrl: data.prUrl, prMeta: null, state: data.state || "queued",
       phase: null, outcome: data.outcome || null, skipped: !!data.skipped, skipReason: data.skipReason || null,
       finished: false, freshFinish: false, notified: false, finishedAt: data.finishedAt || null,
+      createdAt: data.createdAt || null, stats: null,
       summaryText: "", errorText: "", es: null, panelLoaded: false, els: null, _systemShown: false,
     };
     reviews.set(rev.id, rev);
@@ -159,6 +209,7 @@ function upsertReview(data) {
   if (data.state) rev.state = data.state;
   if (data.outcome) rev.outcome = data.outcome;
   if (data.finishedAt) rev.finishedAt = data.finishedAt;
+  if (data.createdAt) rev.createdAt = data.createdAt;
   if (data.skipReason) rev.skipReason = data.skipReason;
   if (data.prMeta && !rev.prMeta) rev.prMeta = data.prMeta;
   else if (data.nameWithOwner && !rev.prMeta) rev.prMeta = { nameWithOwner: data.nameWithOwner, number: data.number, title: data.title };
@@ -171,54 +222,135 @@ function renderLists() {
   const active = all.filter((r) => isActive(r.state));
   const recent = all.filter((r) => !isActive(r.state)).sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
 
-  activeList.innerHTML = "";
-  for (const r of active) activeList.appendChild(activeRow(r));
+  activeList.replaceChildren(...active.map(railRow));
   activeEmpty.hidden = active.length > 0;
+  // The Running heading only earns its space when something is running.
+  runningSect.hidden = active.length === 0;
+  activeN.textContent = active.length ? String(active.length) : "";
 
-  recentList.innerHTML = "";
-  for (const r of recent) recentList.appendChild(recentRow(r));
+  recentList.replaceChildren(...recent.map(railRow));
   recentEmpty.hidden = recent.length > 0;
+
+  // First run, nothing to navigate: drop the rail entirely and let the composer
+  // have the window. The rail appears with the first review.
+  document.body.classList.toggle("no-sessions", all.length === 0);
+  placeComposer();
 }
 
-function activeRow(r) {
-  const row = document.createElement("button");
-  row.className = "arev" + (r.id === selectedId ? " selected" : "");
-  const num = r.prMeta?.number || prNumberFromUrl(r.prUrl);
-  const idx = phaseIndex(r.phase);
-  const pct = idx < 0 ? 6 : Math.round(((idx + 0.5) / PHASES.length) * 100);
-  row.innerHTML =
-    `<div class="arev-top"><span class="arev-dot"></span><span class="arev-num">#${num || r.id.slice(0, 5)}</span>` +
-    `<span class="arev-st">${escapeHtml(r.phase ? phaseShort(r.phase) : r.state)}</span></div>` +
-    `<div class="arev-bar"><i style="width:${pct}%"></i></div>`;
-  row.addEventListener("click", () => selectReview(r.id));
-  return row;
+// The composer has two homes: the top bar while a review is on screen, and
+// centre-stage when the work area is empty. Starting a review is the whole
+// point of prsnooze, so an idle screen hands it the stage rather than leaving a
+// small bar in a corner. Moving the node (not cloning it) keeps its listeners,
+// its value, and any in-flight state intact.
+function placeComposer() {
+  const hero = selectedId == null;
+  const target = hero ? composerHero : composerTop;
+  document.body.classList.toggle("hero-mode", hero);
+  if (composer.parentElement === target) return;
+  target.appendChild(composer);
+  // Focus only on the move into the hero, so re-renders can't yank the caret
+  // out of something else the user is doing.
+  if (hero && !("ontouchstart" in window)) input.focus();
 }
 
-function recentRow(r) {
+// One row shape for every session, running or finished. The rail is now the
+// only way to navigate between reviews, so a row has to carry enough to pick
+// from: what PR, which repo, how it ended (or how far along it is), and when.
+// Built with DOM calls — PR titles and repo names are remote strings and never
+// go through an HTML string.
+function railRow(r) {
   const m = statusMeta(r);
-  const row = document.createElement("div");
-  row.className = `rrow ${m.cls}` + (r.id === selectedId ? " selected" : "");
   const num = r.prMeta?.number || prNumberFromUrl(r.prUrl);
-  const repo = r.prMeta ? shortRepo(r.prMeta.nameWithOwner) : "";
-  const title = r.prMeta?.title ? `${repo} — ${r.prMeta.title}` : (repo || r.prUrl);
-  row.innerHTML =
-    `<span class="rg">${m.icon}</span><span class="rnum">#${num || r.id.slice(0, 5)}</span>` +
-    `<span class="rtitle">${escapeHtml(title)}</span>` +
-    `<span class="rout">${escapeHtml(rowStateText(r))}</span>` +
-    `<span class="rtime">${r.finishedAt ? relTime(r.finishedAt) : ""}</span>`;
-  row.addEventListener("click", () => selectReview(r.id));
+  const label = `#${num || r.id.slice(0, 5)}`;
+  const running = isActive(r.state);
 
-  // Remove-from-list. Its own button, not the status glyph on the left — that
-  // glyph is "✗ failed" and reads like a close box, which is a trap.
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "rdel";
-  del.textContent = "🗑";
-  del.title = "Remove from this list";
-  del.setAttribute("aria-label", `Remove review #${num || r.id.slice(0, 5)} from the list`);
-  del.addEventListener("click", (e) => { e.stopPropagation(); deleteReview(r.id, del); });
-  row.appendChild(del);
+  const row = document.createElement("div");
+  row.className = `srow ${m.cls}` + (r.id === selectedId ? " selected" : "");
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  row.setAttribute("aria-pressed", String(r.id === selectedId));
+
+  const ico = document.createElement("span");
+  ico.className = "srow-ico";
+  ico.appendChild(iconEl(m.ico));
+  row.appendChild(ico);
+
+  const main = document.createElement("div");
+  main.className = "srow-main";
+
+  const top = document.createElement("div");
+  top.className = "srow-top";
+  const n = document.createElement("span"); n.className = "srow-num"; n.textContent = label;
+  const repo = document.createElement("span"); repo.className = "srow-repo";
+  repo.textContent = r.prMeta ? shortRepo(r.prMeta.nameWithOwner) : hostFromUrl(r.prUrl);
+  if (repo.textContent) repo.title = r.prMeta?.nameWithOwner || repo.textContent;
+  // The repo gets the whole top line; the timestamp lives on the footer, where
+  // it isn't competing with a name that matters more.
+  top.append(n, repo);
+
+  const title = document.createElement("div");
+  title.className = "srow-title";
+  title.textContent = r.prMeta?.title || r.prUrl || "";
+  if (r.prMeta?.title) title.title = r.prMeta.title;
+
+  main.append(top, title);
+
+  // Foot: a live progress bar while running, the outcome otherwise.
+  const foot = document.createElement("div");
+  foot.className = "srow-foot";
+  if (running) {
+    const idx = phaseIndex(r.phase);
+    const pct = idx < 0 ? 6 : Math.round(((idx + 0.5) / PHASES.length) * 100);
+    const ph = document.createElement("span");
+    ph.className = "srow-phase";
+    ph.textContent = r.phase ? phaseShort(r.phase) : r.state;
+    const bar = document.createElement("div");
+    bar.className = "srow-bar";
+    const fill = document.createElement("i");
+    fill.style.width = `${pct}%`;
+    bar.appendChild(fill);
+    foot.append(ph, bar);
+  } else {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = rowStateText(r);
+    foot.appendChild(chip);
+    if (r.finishedAt) {
+      const when = document.createElement("span");
+      when.className = "srow-when";
+      when.textContent = relTime(r.finishedAt);
+      foot.appendChild(when);
+    }
+  }
+  main.appendChild(foot);
+  row.appendChild(main);
+
+  const select = () => selectReview(r.id);
+  row.addEventListener("click", select);
+  row.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
+  });
+
+  // Remove-from-list. Its own button with a trash icon — the status glyph on
+  // the left used to be an "✗" for failed reviews, which read like a close box
+  // and did nothing when clicked.
+  if (!running) {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "srow-del";
+    del.title = "Remove from this list";
+    del.setAttribute("aria-label", `Remove review ${label} from the list`);
+    del.appendChild(iconEl("trash"));
+    del.addEventListener("click", (e) => { e.stopPropagation(); deleteReview(r.id, del); });
+    row.appendChild(del);
+  }
   return row;
+}
+
+// Fallback label for a row whose PR metadata hasn't arrived yet.
+function hostFromUrl(u) {
+  const m = /github\.com\/([^/]+)\/([^/]+)/.exec(u || "");
+  return m ? m[2] : "";
 }
 
 // Remove a finished review: server first, local state only once it agrees, so
@@ -256,6 +388,7 @@ function dropReview(id) {
   if (selectedId === id) {
     selectedId = null;
     localStorage.removeItem(LS_SELECTED);
+    try { history.replaceState(null, "", location.pathname + location.search); } catch {}
     emptyState.hidden = false;
   }
 }
@@ -281,6 +414,10 @@ function selectReview(id) {
   if (!rev) return;
   selectedId = id;
   localStorage.setItem(LS_SELECTED, id);
+  // Reflect the open review in the URL so a refresh (or a pasted link) lands
+  // back on it. replaceState, not push — the rail is the navigation, and every
+  // click shouldn't add a history entry to back out of.
+  try { history.replaceState(null, "", `#${id}`); } catch {}
   emptyState.hidden = true;
   input.value = rev.prUrl || "";
   ensurePanel(rev);
@@ -300,14 +437,90 @@ function ensurePanel(rev) {
   const head = document.createElement("div"); head.className = "panel-head";
   const submeta = document.createElement("div"); submeta.className = "submeta";
   const stepper = document.createElement("div"); stepper.className = "stepper";
+  const stats = document.createElement("div"); stats.className = "stats";
   const summary = document.createElement("div"); summary.className = "card summary";
   const sect = document.createElement("div"); sect.className = "sect";
-  sect.innerHTML = `<div class="sect-h"><span class="chev">▸</span> Activity <span class="count">0 events</span></div><div class="sect-body"><ol class="log"></ol></div>`;
-  panel.append(head, submeta, stepper, summary, sect);
+  sect.innerHTML = `<div class="sect-h" role="button" tabindex="0"><span class="chev">${svgIcon("chevron")}</span>` +
+    `<span class="sect-t">Activity</span><span class="live-dot" aria-hidden="true"></span>` +
+    `<span class="count">0 events</span></div><div class="sect-body"><ol class="log"></ol></div>`;
+  // Activity sits above the review text: while a run is live the log is the
+  // thing worth watching, and the comments only exist once it's done.
+  panel.append(head, submeta, stepper, stats, sect, summary);
   panels.appendChild(panel);
-  rev.els = { ...(rev.els || {}), panel, head, submeta, stepper, summary, sect, log: sect.querySelector(".log"), count: sect.querySelector(".count") };
-  renderHead(rev); renderStepper(rev); renderSummary(rev);
+  rev.els = { ...(rev.els || {}), panel, head, submeta, stepper, stats, summary, sect, log: sect.querySelector(".log"), count: sect.querySelector(".count") };
+  renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev);
   return panel;
+}
+
+// Facts about the run, from data the job already carries: the PR's diff size
+// (split prod vs test, which is what the auto-approve caps key off), the branch
+// it targets, and what the Claude session cost in time and turns. This is what
+// a finished review has to say beyond its one-line verdict — without it the
+// panel is a headline over an empty page.
+function renderStats(rev) {
+  const el = rev.els?.stats;
+  if (!el) return;
+  const m = rev.prMeta || {};
+  const s = rev.stats || {};
+  const tiles = [];
+
+  if (Number.isFinite(m.additions) || Number.isFinite(m.deletions)) {
+    tiles.push({
+      icon: "diff",
+      label: "diff",
+      value: `+${m.additions ?? 0} −${m.deletions ?? 0}`,
+      sub: Number.isFinite(m.changedFiles) ? `${m.changedFiles} file${m.changedFiles === 1 ? "" : "s"}` : "",
+    });
+  }
+  if (Number.isFinite(m.prodAdditions) || Number.isFinite(m.prodDeletions)) {
+    tiles.push({
+      icon: "files",
+      label: "prod code",
+      value: `+${m.prodAdditions ?? 0} −${m.prodDeletions ?? 0}`,
+      sub: Number.isFinite(m.prodFiles) ? `${m.prodFiles} file${m.prodFiles === 1 ? "" : "s"}` : "",
+    });
+  }
+  if (m.headRefName || m.baseRefName) {
+    tiles.push({ icon: "branch", label: "branch", value: m.headRefName || "?", sub: m.baseRefName ? `→ ${m.baseRefName}` : "", mono: true });
+  }
+  const ms = s.durationMs || (rev.finishedAt && rev.createdAt ? rev.finishedAt - rev.createdAt : 0);
+  if (ms > 0) tiles.push({ icon: "timer", label: "took", value: humanMs(ms), sub: "" });
+  if (Number.isFinite(s.numTurns)) tiles.push({ icon: "turns", label: "turns", value: String(s.numTurns), sub: "" });
+  if (Number.isFinite(s.totalCostUsd) && s.totalCostUsd > 0) {
+    tiles.push({ icon: "coin", label: "cost", value: `$${s.totalCostUsd < 0.01 ? s.totalCostUsd.toFixed(4) : s.totalCostUsd.toFixed(2)}`, sub: "" });
+  }
+
+  el.replaceChildren();
+  el.hidden = tiles.length === 0;
+  for (const t of tiles) {
+    const tile = document.createElement("div");
+    tile.className = "stat";
+    const head = document.createElement("div");
+    head.className = "stat-h";
+    head.appendChild(iconEl(t.icon));
+    const lb = document.createElement("span"); lb.textContent = t.label;
+    head.appendChild(lb);
+    const val = document.createElement("div");
+    val.className = "stat-v" + (t.mono ? " mono" : "");
+    val.textContent = t.value;
+    val.title = t.value;
+    tile.append(head, val);
+    if (t.sub) {
+      const sub = document.createElement("div");
+      sub.className = "stat-s" + (t.mono ? " mono" : "");
+      sub.textContent = t.sub;
+      sub.title = t.sub;
+      tile.appendChild(sub);
+    }
+    el.appendChild(tile);
+  }
+}
+
+function humanMs(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
 }
 
 function renderHead(rev) {
@@ -317,20 +530,14 @@ function renderHead(rev) {
   const title = rev.prMeta?.title || (num ? `PR #${num}` : `Review ${rev.id.slice(0, 8)}`);
   const head = rev.els.head;
   head.replaceChildren();
-  // Title link is built as a DOM node so the PR URL never enters an HTML
-  // string, and only a validated http(s) URL is assigned to href (parsing
-  // rejects javascript: and other schemes → falls back to "#").
-  const a = document.createElement("a");
-  a.className = "ttl";
-  a.target = "_blank";
-  a.rel = "noopener";
-  a.textContent = `${title} ↗`;
-  a.href = "#";
-  try {
-    const u = new URL(rev.prUrl || "");
-    if (u.protocol === "https:" || u.protocol === "http:") { a.href = u.href; a.title = rev.prUrl; }
-  } catch {}
-  head.appendChild(a);
+  // The PR title is just a heading now. The link is the full URL below it —
+  // people want to see and copy the whole thing, not hunt for it behind a
+  // title. Only a validated http(s) URL is ever assigned to an href (parsing
+  // rejects javascript: and friends).
+  const h = document.createElement("h1");
+  h.className = "ttl";
+  h.textContent = title;
+  head.appendChild(h);
   // Remaining controls built via DOM (no HTML sink) — text via textContent.
   const badge = document.createElement("span");
   badge.className = `badge ${rev.state}`;
@@ -343,20 +550,20 @@ function renderHead(rev) {
     // approves under its own gh identity, so a self-authored PR is refused.
     if (rev.outcome === "approved") {
       const b = document.createElement("button");
-      b.className = "approve"; b.disabled = true; b.textContent = "✓ Approved";
+      b.className = "approve"; b.disabled = true; b.textContent = "Approved"; b.prepend(iconEl("check"));
       head.appendChild(b);
     } else if (passwordConfigured) {
       const b = document.createElement("button");
       b.className = "approve";
       b.dataset.id = rev.id;
       if (hostLogin && rev.prMeta?.authorLogin && hostLogin === rev.prMeta.authorLogin) {
-        b.disabled = true; b.textContent = "✓ Approve PR";
+        b.disabled = true; b.textContent = "Approve PR"; b.prepend(iconEl("check"));
         b.title = `Can't approve your own PR (prsnooze approves as @${hostLogin})`;
       } else if (!unlocked) {
-        b.classList.add("locked"); b.textContent = "🔒 Approve PR";
+        b.classList.add("locked"); b.textContent = "Approve PR"; b.prepend(iconEl("lock"));
         b.title = "Locked — click to enter the admin password";
       } else {
-        b.textContent = "✓ Approve PR";
+        b.textContent = "Approve PR"; b.prepend(iconEl("check"));
       }
       head.appendChild(b);
     }
@@ -370,59 +577,135 @@ function renderHead(rev) {
     const mb = document.createElement("button");
     mb.dataset.mode = m;
     if (mode === m) mb.className = "on";
-    mb.textContent = m === "zen" ? "🧘 Zen" : "🛠 Detailed";
+    mb.appendChild(iconEl(m === "zen" ? "moon" : "wrench"));
+    mb.appendChild(document.createTextNode(m === "zen" ? "Zen" : "Detailed"));
+    mb.title = m === "zen" ? "Just the verdict" : "Verdict plus the full activity log";
     modes.appendChild(mb);
   }
   head.appendChild(modes);
-  rev.els.submeta.textContent = `${repo}${num ? " #" + num : ""}${rev.prMeta?.authorLogin ? " · @" + rev.prMeta.authorLogin : ""}`;
+  renderPrLine(rev);
+}
+
+// The full PR URL, shown in full and clickable, plus who opened it.
+function renderPrLine(rev) {
+  const el = rev.els?.submeta;
+  if (!el) return;
+  el.replaceChildren();
+  let href = null;
+  try {
+    const u = new URL(rev.prUrl || "");
+    if (u.protocol === "https:" || u.protocol === "http:") href = u.href;
+  } catch {}
+  const link = document.createElement(href ? "a" : "span");
+  link.className = "prlink";
+  if (href) { link.href = href; link.target = "_blank"; link.rel = "noopener"; }
+  link.textContent = rev.prUrl || "";
+  link.appendChild(iconEl("external", "ttl-ico"));
+  el.appendChild(link);
+  if (rev.prMeta?.authorLogin) {
+    const by = document.createElement("span");
+    by.className = "prby";
+    by.textContent = `opened by @${rev.prMeta.authorLogin}`;
+    el.appendChild(by);
+  }
 }
 
 function badgeText(rev) {
-  let t = rev.state;
-  if (rev.phase && isActive(rev.state)) t = `${rev.state} · ${phaseShort(rev.phase)}`;
-  if (rev.outcome) t = `${t} · ${outcomeLabel(rev.outcome)}`;
-  return t;
+  // One label, the most specific one available: the phase while it runs, the
+  // outcome once it's finished. "done · commented" was two words for one fact.
+  if (isActive(rev.state)) return rev.phase ? `${rev.state} · ${phaseShort(rev.phase)}` : rev.state;
+  if (rev.outcome) return outcomeLabel(rev.outcome);
+  return rev.state;
 }
 function needsApprove(rev) { return rev.state === "done" && rev.outcome !== "approved"; }
 
 function renderStepper(rev) {
-  if (!rev.els?.stepper) return;
-  const idx = phaseIndex(rev.phase);
+  const el = rev.els?.stepper;
+  if (!el) return;
+  // Five equal labelled segments read as a row of tabs, so the bar is only
+  // drawn while there's motion to show. A finished run keeps the same one-line
+  // breadcrumb — the stages it went through are worth keeping, just not worth a
+  // progress bar that is permanently full.
+  el.hidden = false;
   const done = rev.state === "done";
-  let html = "";
-  for (let i = 0; i < PHASES.length; i++) {
-    let c = "";
-    if (done) c = "done";
-    else if (i < idx) c = "done";
-    else if (i === idx) c = isActive(rev.state) ? "cur" : "stop";
-    html += `<div class="step"><div class="seg ${c}"><i></i></div><span class="slabel${i === idx && isActive(rev.state) ? " on" : ""}">${PHASES[i].label}</span></div>`;
-  }
-  rev.els.stepper.innerHTML = html;
+  const idx = done ? PHASES.length : phaseIndex(rev.phase);
+  const live = isActive(rev.state);
+  const pct = idx < 0 ? 4 : Math.round(((idx + (live ? 0.5 : 1)) / PHASES.length) * 100);
+
+  const pipe = document.createElement("div");
+  pipe.className = "pipe" + (done ? " pipe-done" : "");
+  if (done) pipe.appendChild(iconEl("check"));
+  PHASES.forEach((ph, i) => {
+    if (i) {
+      const sep = document.createElement("span");
+      sep.className = "pipe-sep";
+      sep.textContent = "/";
+      pipe.appendChild(sep);
+    }
+    const st = document.createElement("span");
+    st.className = "pipe-step " + (i < idx ? "done" : i === idx ? (live ? "cur" : "stop") : "todo");
+    st.textContent = ph.label;
+    pipe.appendChild(st);
+  });
+
+  if (done) { el.replaceChildren(pipe); return; }
+
+  const bar = document.createElement("div");
+  bar.className = "pipe-bar" + (live ? " live" : " stopped");
+  const fill = document.createElement("i");
+  fill.style.width = `${pct}%`;
+  bar.appendChild(fill);
+
+  el.replaceChildren(pipe, bar);
 }
 
 function renderSummary(rev) {
   if (!rev.els?.summary) return;
   const s = rev.state, o = rev.outcome;
   let cls = "", html;
-  if (isActive(s)) { cls = "run"; html = `<b>Reviewing now…</b> live progress above. The verdict and any findings appear here when it finishes.`; }
-  else if (s === "interrupted") { cls = "warn"; html = `⏸ <b>Interrupted.</b> The server restarted mid-review — use ↻ Restart Review to run it again.`; }
-  else if (s === "failed") { cls = "warn"; html = `❌ <b>Failed.</b> ${escapeHtml(rev.errorText || "See the activity log below.")}`; }
-  else {
+  if (isActive(s)) {
+    cls = "run";
+    html = svgIcon("play") + `<b>Reviewing now.</b> The verdict and the review text land here when it finishes.`;
+  } else if (s === "interrupted") {
+    cls = "warn";
+    html = svgIcon("pause") + `The server restarted mid-review. Start it again to run from scratch.`;
+  } else if (s === "failed") {
+    cls = "warn";
+    html = svgIcon("xcircle") + escapeHtml(rev.errorText || "Failed — see the activity log below.");
+  } else {
     let lead;
     switch (o) {
-      case "approved": lead = "✓ <b>Approved.</b>"; break;
-      case "commented": lead = "💬 <b>Commented.</b>"; break;
-      case "changes_requested": lead = "⚠ <b>Changes requested.</b>"; break;
-      case "no_new_findings": lead = "○ <b>Nothing new.</b> No comment posted — every concern was already covered."; break;
-      case "skipped": lead = "↪ <b>Skipped.</b> " + escapeHtml(rev.skipReason || ""); break;
-      default: lead = "✓ <b>Done.</b>";
+      case "approved": lead = svgIcon("check") + "Approval posted to the PR — no critical or major issues, and small enough to auto-approve."; break;
+      case "commented": lead = svgIcon("comment") + "Review posted to the PR."; break;
+      case "changes_requested": lead = svgIcon("alert") + "Changes requested on the PR."; break;
+      case "no_new_findings": lead = svgIcon("circle") + "Nothing new — every concern was already covered, so no comment was posted."; break;
+      case "skipped": lead = svgIcon("skip") + escapeHtml(rev.skipReason || "Skipped."); break;
+      default: lead = svgIcon("check") + "Finished.";
     }
-    // The full verdict/comment is only shown in Detailed mode, small + muted
-    // so it doesn't dominate. Zen shows just the one-line outcome.
-    html = lead + (rev.summaryText && mode === "detailed" ? `<div class="summary-detail">${escapeHtml(rev.summaryText)}</div>` : "");
+    // What the review actually said, in both modes. It used to be Detailed-only,
+    // which left Zen as a one-line verdict over an empty page — hiding the one
+    // thing the user came to read. Detailed adds the activity log on top.
+    html = lead + (rev.summaryText ? `<div class="summary-detail">${mdLite(rev.summaryText)}</div>` : "");
   }
+  // Pulse the Activity header while the run is live — the section is collapsed
+  // in Zen, and a still header gave no hint there was anything to open.
+  rev.els.sect?.classList.toggle("live", isActive(s));
   rev.els.summary.className = "card summary" + (cls ? " " + cls : "");
   rev.els.summary.innerHTML = html;
+}
+
+// Minimal markdown for the review body: bold, inline code, and bare URLs.
+// Escapes FIRST, so everything below operates on inert text and no remote string
+// can introduce markup. Deliberately not a full parser — just the three things
+// Claude's review text actually uses.
+function mdLite(text) {
+  let h = escapeHtml(String(text));
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  // Only http(s) links, and the href is the already-escaped text — no scheme
+  // other than http/https can appear here.
+  h = h.replace(/\bhttps?:\/\/[^\s<>"')\]]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+  return h;
 }
 
 function applyMode(rev) {
@@ -443,10 +726,13 @@ async function loadFinishedLog(rev) {
     if (job.prMeta) rev.prMeta = job.prMeta;
     rev.state = job.state; rev.outcome = job.outcome || rev.outcome; rev.finished = true;
     if (job.summary?.finalText) rev.summaryText = job.summary.finalText;
+    if (job.summary) rev.stats = { durationMs: job.summary.durationMs, numTurns: job.summary.numTurns, totalCostUsd: job.summary.totalCostUsd };
+    if (job.createdAt) rev.createdAt = job.createdAt;
+    if (job.finishedAt) rev.finishedAt = job.finishedAt;
     rev.sessionId = job.sessionId || job.summary?.sessionId || rev.sessionId;
     for (const ev of job.events || []) { if (ev.kind === "phase") rev.phase = ev.phase; appendLog(rev, ev); }
     rev.els.count.textContent = `${rev.els.log.children.length} events`;
-    renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
+    renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev); renderLists();
     if (rev.id === selectedId) updateSubmitButton();
   } catch {}
 }
@@ -475,9 +761,14 @@ function handleEvent(rev, ev) {
     case "phase": rev.phase = ev.phase; setState(rev, "running"); break;
     case "started": setState(rev, "running"); break;
     case "queued": setState(rev, "queued"); break;
-    case "pr_meta": rev.prMeta = ev; renderHead(rev); renderLists(); break;
+    case "pr_meta": rev.prMeta = ev; renderHead(rev); renderStats(rev); renderLists(); break;
     case "outcome_detected": rev.outcome = ev.outcome; renderHead(rev); renderSummary(rev); renderLists(); break;
-    case "summary": if (ev.finalText) rev.summaryText = ev.finalText; if (ev.sessionId) rev.sessionId = ev.sessionId; renderSummary(rev); break;
+    case "summary":
+      if (ev.finalText) rev.summaryText = ev.finalText;
+      if (ev.sessionId) rev.sessionId = ev.sessionId;
+      rev.stats = { durationMs: ev.durationMs, numTurns: ev.numTurns, totalCostUsd: ev.totalCostUsd };
+      renderStats(rev); renderSummary(rev);
+      break;
     case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipReason = ev.reason; finish(rev, "done"); break;
     case "failed": rev.errorText = ev.error || ""; finish(rev, "failed"); break;
     case "done": finish(rev, "done"); break;
@@ -749,28 +1040,31 @@ function appendLog(rev, ev) {
 function scrollLog(rev) { if (rev.id === selectedId && rev.els?.log) rev.els.log.scrollTop = rev.els.log.scrollHeight; }
 
 // ------------------------------------------------------------ status light --
+// One place that maps a review's state to how it looks. `ico` names an SVG for
+// the UI; `icon` stays an emoji because it's used in OS notification titles,
+// where SVG isn't an option.
 function statusMeta(rev) {
   const s = rev.state, o = rev.outcome;
-  if (s === "running") return { icon: "●", cls: "running", running: true };
-  if (s === "queued") return { icon: "○", cls: "queued", running: true };
-  if (s === "failed") return { icon: "✗", cls: "failed", needsYou: true };
-  if (s === "interrupted") return { icon: "⏸", cls: "interrupted" };
+  if (s === "running") return { ico: "play", icon: "●", cls: "running", running: true };
+  if (s === "queued") return { ico: "clock", icon: "○", cls: "queued", running: true };
+  if (s === "failed") return { ico: "xcircle", icon: "✗", cls: "failed", needsYou: true };
+  if (s === "interrupted") return { ico: "pause", icon: "⏸", cls: "interrupted" };
   switch (o) {
-    case "approved": return { icon: "✓", cls: "approved" };
-    case "commented": return { icon: "💬", cls: "commented" };
-    case "changes_requested": return { icon: "⚠", cls: "changes", needsYou: true };
-    case "no_new_findings": return { icon: "○", cls: "nonew" };
-    case "skipped": return { icon: "↪", cls: "skipped" };
-    default: return { icon: "✓", cls: "done" };
+    case "approved": return { ico: "check", icon: "✓", cls: "approved" };
+    case "commented": return { ico: "comment", icon: "💬", cls: "commented" };
+    case "changes_requested": return { ico: "alert", icon: "⚠", cls: "changes", needsYou: true };
+    case "no_new_findings": return { ico: "circle", icon: "○", cls: "nonew" };
+    case "skipped": return { ico: "skip", icon: "↪", cls: "skipped" };
+    default: return { ico: "check", icon: "✓", cls: "done" };
   }
 }
 function brandFavicon(variant) {
   const eyes = variant === "idle"
-    ? `<path d="M14 33 q9 10 18 0" fill="none" stroke="#f2e9e0" stroke-width="4" stroke-linecap="round"/><path d="M33 33 q9 10 18 0" fill="none" stroke="#f2e9e0" stroke-width="4" stroke-linecap="round"/>`
-    : `<ellipse cx="24" cy="34" rx="9" ry="11" fill="#f2e9e0"/><circle cx="24" cy="36" r="4.6" fill="#1b1815"/><ellipse cx="42" cy="34" rx="9" ry="11" fill="#f2e9e0"/><circle cx="42" cy="36" r="4.6" fill="#1b1815"/>`;
-  const zzz = variant === "idle" ? `<text x="39" y="21" font-family="Arial,sans-serif" font-size="17" font-weight="bold" fill="#fb923c">z</text>` : "";
-  const dot = variant === "needs" ? `<circle cx="52" cy="12" r="7" fill="#ef4444"/>` : "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#2a241f"/>${eyes}${zzz}${dot}</svg>`;
+    ? `<path d="M14 33 q9 10 18 0" fill="none" stroke="#eaeefb" stroke-width="4" stroke-linecap="round"/><path d="M33 33 q9 10 18 0" fill="none" stroke="#eaeefb" stroke-width="4" stroke-linecap="round"/>`
+    : `<ellipse cx="24" cy="34" rx="9" ry="11" fill="#eaeefb"/><circle cx="24" cy="36" r="4.6" fill="#0d1020"/><ellipse cx="42" cy="34" rx="9" ry="11" fill="#eaeefb"/><circle cx="42" cy="36" r="4.6" fill="#0d1020"/>`;
+  const zzz = variant === "idle" ? `<text x="39" y="21" font-family="Arial,sans-serif" font-size="17" font-weight="bold" fill="#ffb457">z</text>` : "";
+  const dot = variant === "needs" ? `<circle cx="52" cy="12" r="7" fill="#ff6b81"/>` : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#171c33"/>${eyes}${zzz}${dot}</svg>`;
   return "data:image/svg+xml," + encodeURIComponent(svg);
 }
 function updateStatusLight() {
@@ -834,10 +1128,12 @@ function applySnapshot(data) {
   renderQueueStatus(data.queue);
   maybeShowWelcome(data.jobs || []);
   if (!selectedId) {
-    const saved = localStorage.getItem(LS_SELECTED);
+    const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
+    const saved = fromHash || localStorage.getItem(LS_SELECTED);
     if (saved && reviews.has(saved)) selectReview(saved);
   }
   emptyState.hidden = selectedId != null;
+  placeComposer();
   updateStatusLight();
 }
 
@@ -944,7 +1240,11 @@ async function loadConfig() {
     hostLogin = cfg.hostLogin || null;
     passwordConfigured = !!cfg.passwordConfigured;
     unlocked = !!cfg.unlocked;
-    if (cfg.host) { hostName = cfg.host; hostNameEl.textContent = `on ${hostName}'s machine`; }
+    if (cfg.host) {
+      hostName = cfg.host;
+      hostNameEl.textContent = `on ${hostName}'s machine`;
+      if (heroHost) heroHost.textContent = cfg.hostLogin ? ` as @${cfg.hostLogin}` : ` as ${hostName}`;
+    }
     updateLockChip();
     if (unlocked) setUnlocked(true); // (re)arm the client-side relock timer
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
@@ -957,6 +1257,7 @@ window.addEventListener("beforeunload", stampLastSeen);
 
 // ------------------------------------------------------------------- init ---
 soundToggle.checked = localStorage.getItem(LS_SOUND) === "1";
+placeComposer();  // before the first paint, so the composer never flashes in the wrong slot
 updateNotifHint();
 updateStatusLight();
 loadConfig();
