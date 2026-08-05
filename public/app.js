@@ -576,19 +576,46 @@ function renderHead(rev) {
       head.appendChild(b);
     }
     // Resume: continue the original Claude session so it can judge the author's
-    // new commits and replies against the comments it already left. Its label
-    // carries the server's verdict, so the button explains itself.
+    // new commits and replies against the comments it already left.
+    //
+    // Always enabled. Wanting another pass is a legitimate reason on its own —
+    // including on an approved PR — so the checks inform rather than forbid:
+    // press it, and if the conditions say it's pointless you get the reason and
+    // a separate Force resume. The one thing force can't do is run against a
+    // merged or closed PR, because there is no longer a PR to review.
     if (rev.sessionId) {
       const a = rev.resume;
       const b = document.createElement("button");
-      b.className = "resume" + (a && !a.resumable && !rev.resumeArmed ? " muted" : "");
+      b.className = "resume";
       b.dataset.resumeId = rev.id;
       b.appendChild(iconEl("refresh"));
-      b.appendChild(document.createTextNode(rev.resumeArmed ? "Resume anyway" : "Resume review"));
+      b.appendChild(document.createTextNode("Resume review"));
       b.title = rev.resumeLoading
         ? "Checking the PR for new commits and replies…"
-        : a?.reason || "Continue this review where it left off";
+        : a?.resumable
+          ? a.reason
+          : "Run this review again, continuing the original session";
       head.appendChild(b);
+
+      // Force only appears once a real attempt has been refused.
+      if (rev.resumeArmed) {
+        const state = String(a?.signals?.prState || "").toUpperCase();
+        // The server is the authority on whether forcing is possible; prState is
+        // only used to word the explanation.
+        const closed = rev.resumeForcible === false || (state && state !== "OPEN");
+        const f = document.createElement("button");
+        f.className = "resume force";
+        f.dataset.forceId = rev.id;
+        f.disabled = closed;
+        f.appendChild(iconEl(closed ? "xcircle" : "refresh"));
+        f.appendChild(document.createTextNode("Force resume"));
+        f.title = closed
+          ? (state && state !== "OPEN"
+              ? `The PR is ${state.toLowerCase()} — a review can't run against it.`
+              : a?.reason || "This review can't be resumed.")
+          : "Run it again anyway, in the same session";
+        head.appendChild(f);
+      }
       if (a?.reason) {
         const why = document.createElement("div");
         why.className = "resume-why" + (a.resumable ? " yes" : "");
@@ -878,13 +905,10 @@ panels.addEventListener("click", (e) => {
     if (!unlocked) { pendingApprove = { id: ap.dataset.id }; openUnlock(); return; }
     approveReview(ap.dataset.id, ap); return;
   }
+  const fr = e.target.closest(".resume.force");
+  if (fr && fr.dataset.forceId && !fr.disabled) { verifyReview(fr.dataset.forceId, true); return; }
   const rs = e.target.closest(".resume");
-  if (rs && rs.dataset.resumeId && !rs.disabled) {
-    const rev = reviews.get(rs.dataset.resumeId);
-    // Second press after a refusal is the override.
-    verifyReview(rs.dataset.resumeId, !!rev?.resumeArmed);
-    return;
-  }
+  if (rs && rs.dataset.resumeId && !rs.disabled) { verifyReview(rs.dataset.resumeId, false); return; }
   const sh = e.target.closest(".sect-h");
   if (sh) {
     const panel = sh.closest(".review-panel");
@@ -1013,9 +1037,13 @@ async function verifyReview(id, force = false) {
       // refusing — the user may know something GitHub doesn't.
       if (r.status === 409 && data.assessment) {
         rev.resume = data.assessment;
+        // Force always becomes visible after a refusal — but it renders disabled
+        // when forcing can't change the answer, so the UI shows the option and
+        // why it isn't available rather than hiding it.
         rev.resumeArmed = true;
+        rev.resumeForcible = data.forcible !== false;
         renderHead(rev);
-        showToast(escapeHtml(data.assessment.reason) + " — press Resume again to run it anyway.");
+        showToast(escapeHtml(data.assessment.reason) + (data.forcible === false ? "" : " Use Force resume to run it anyway."));
         return;
       }
       showToast("Couldn't resume: " + escapeHtml(data.error || "error"));

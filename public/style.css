@@ -544,8 +544,10 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .resume { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 9px; border: 1px solid var(--border-2); background: var(--panel-2); color: var(--text); font-weight: 650; font-size: 13px; cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease; }
 .resume:hover { border-color: var(--accent); color: var(--accent); }
 .resume .ico { width: 14px; height: 14px; }
-.resume.muted { color: var(--faint); border-style: dashed; }
-.resume.muted:hover { color: var(--accent); border-style: solid; }
+.resume.force { border-style: dashed; border-color: rgba(245, 198, 94, 0.5); color: var(--yellow); }
+.resume.force:hover:not(:disabled) { border-style: solid; border-color: var(--yellow); background: rgba(245, 198, 94, 0.12); color: var(--yellow); }
+.resume.force:disabled { cursor: not-allowed; color: var(--faint); border-color: var(--border); border-style: dashed; background: transparent; }
+.resume:disabled { cursor: not-allowed; }
 /* order:9 keeps the reason on its own line BELOW the head's controls rather
    than shoving the Zen/Detailed toggle down a row. */
 .resume-why { order: 9; flex: 1 1 100%; margin-top: -2px; font-size: 12px; line-height: 1.5; color: var(--faint); }

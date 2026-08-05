@@ -13,7 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
-const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -477,21 +477,25 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   if (isJobActive(job)) {
     return res.status(409).json({ error: "this review is already running" });
   }
-  // Don't burn a Claude session on a PR that's merged, already approved, or
-  // untouched since the last look. `force` is the deliberate override, and the
-  // reason is handed back so the UI can explain the refusal.
-  if (!req.body?.force) {
-    let assessment;
-    try {
-      assessment = await assessJobResume(job);
-    } catch (e) {
-      assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
-    }
-    if (!assessment.resumable) {
-      return res.status(409).json({ error: assessment.reason, assessment });
-    }
-    job.resumeReason = assessment.reason;
+  // Don't burn a Claude session on a PR that's already approved or untouched
+  // since the last look — but that's advice, not a veto: `force` overrides it,
+  // and the reason is handed back so the UI can explain what it's overriding.
+  //
+  // The one thing force cannot override is a merged or closed PR. There's no PR
+  // left to review, the run would die at `resolving` anyway (fetchPrMetadata
+  // refuses a non-OPEN PR), and getting that far would have flipped a finished
+  // review's state to failed for nothing.
+  let assessment;
+  try {
+    assessment = await assessJobResume(job);
+  } catch (e) {
+    assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
   }
+  const gate = resumeGate({ assessment, forced: !!req.body?.force });
+  if (!gate.allow) {
+    return res.status(409).json({ error: gate.reason, assessment, forcible: gate.forcible });
+  }
+  job.resumeReason = gate.reason;
   job.mode = "verify";
   job.resumeSessionId = sessionId;
   job.state = "queued";
