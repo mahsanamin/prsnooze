@@ -379,7 +379,12 @@ body::after {
   position: relative;
   z-index: 1;
 }
-main.app { flex: 1; min-height: 0; display: flex; }
+main.app { flex: 1; min-height: 0; display: flex; position: relative; }
+
+/* The rail toggle and its backdrop only exist below the breakpoint — see the
+   narrow block at the bottom of this file. */
+.rail-toggle { display: none; }
+.rail-backdrop { display: none; }
 
 /* ------------------------------------------------------------- rail ------- */
 /* Every session lives here, running and finished, in one scrollable column.
@@ -706,10 +711,53 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 
 /* ------------------------------------------------------------ narrow ------ */
 @media (max-width: 860px) {
-  .topbar { flex-wrap: wrap; gap: 10px; }
+  .topbar { flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
   #composer-top { order: 3; flex-basis: 100%; }
-  .rail { flex-basis: 232px; }
   .hero-h { font-size: 28px; }
   .composer { flex-wrap: wrap; }
   .hero-stage .composer { flex-wrap: nowrap; }
+  .brand-host { display: none; }   /* the machine name is the first thing to go */
+
+  /* The rail becomes a drawer. A 320px column plus a review panel doesn't fit a
+     phone, and the panel is what you came for — so the rail slides over it on
+     request and leaves as soon as you've picked a session (see railRow()). */
+  .rail-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: 0 0 auto; width: 38px; height: 38px; padding: 0;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: rgba(8, 9, 13, 0.5); color: var(--muted);
+    cursor: pointer;
+  }
+  .rail-toggle:hover { color: var(--text); border-color: var(--border-2); }
+  .rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Nothing to switch between yet — don't offer a drawer onto an empty list. */
+  .no-sessions .rail-toggle { display: none; }
+
+  .rail {
+    position: absolute;
+    z-index: 30;
+    inset: 0 auto 0 0;
+    flex: 0 0 auto;
+    width: min(84vw, 320px);
+    border-right: 1px solid var(--border-2);
+    box-shadow: 24px 0 60px -20px rgba(0, 0, 0, 0.85);
+    /* The card is inset from the window, so a plain -100% leaves the rail's
+       right border and shadow poking into view. Clear that offset too. */
+    transform: translateX(calc(-100% - 32px));
+    transition: transform 0.22s ease;
+    will-change: transform;
+  }
+  .rail-open .rail { transform: none; }
+
+  .rail-backdrop { display: block; position: absolute; inset: 0; z-index: 20; background: rgba(5, 6, 10, 0.55); }
+  .rail-backdrop[hidden] { display: none; }
+
+  /* The panel keeps the full width underneath the drawer. */
+  .review-panel { padding: 14px 14px; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
+  .panel-head .ttl { font-size: 17px; flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail { transition: none; }
 }

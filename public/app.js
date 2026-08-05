@@ -18,6 +18,8 @@ const activeEmpty = $("active-empty");
 const recentList = $("recent-list");
 const recentEmpty = $("recent-empty");
 const rail = $("rail");
+const railToggle = $("rail-toggle");
+const railBackdrop = $("rail-backdrop");
 const runningSect = $("running-sect");
 const activeN = $("active-n");
 const composer = $("composer");
@@ -240,6 +242,28 @@ function renderLists() {
   placeComposer();
 }
 
+// On a narrow screen the sessions rail is off-canvas: it slides over the panel
+// when asked for and gets out of the way as soon as you've picked something.
+// Above the breakpoint none of this applies — the rail is simply always there,
+// and the CSS hides the toggle.
+function setRailOpen(open) {
+  const on = !!open;
+  document.body.classList.toggle("rail-open", on);
+  railToggle?.setAttribute("aria-expanded", String(on));
+  railToggle?.setAttribute("aria-label", on ? "Hide sessions" : "Show sessions");
+  if (railBackdrop) railBackdrop.hidden = !on;
+}
+const closeRail = () => setRailOpen(false);
+
+railToggle?.addEventListener("click", () => setRailOpen(!document.body.classList.contains("rail-open")));
+railBackdrop?.addEventListener("click", closeRail);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.body.classList.contains("rail-open")) { closeRail(); railToggle?.focus(); }
+});
+// A window wide enough for the rail to be docked has no business remembering
+// that it was once open as an overlay.
+window.addEventListener("resize", () => { if (window.innerWidth > 860) closeRail(); });
+
 // The composer has two homes: the top bar while a review is on screen, and
 // centre-stage when the work area is empty. Starting a review is the whole
 // point of prsnooze, so an idle screen hands it the stage rather than leaving a
@@ -328,7 +352,7 @@ function railRow(r) {
   main.appendChild(foot);
   row.appendChild(main);
 
-  const select = () => selectReview(r.id);
+  const select = () => { selectReview(r.id); closeRail(); };
   row.addEventListener("click", select);
   row.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }

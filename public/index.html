@@ -10,6 +10,14 @@
   <body>
     <div class="wrap">
     <header class="topbar">
+      <!-- Opens the sessions rail on narrow screens, where the rail is
+           off-canvas. Hidden by CSS above the breakpoint, and while there are no
+           sessions to switch between. -->
+      <button id="rail-toggle" class="rail-toggle" type="button" aria-label="Show sessions" aria-expanded="false" aria-controls="rail">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" />
+        </svg>
+      </button>
       <div class="brandrow">
         <span class="logo">
           <svg viewBox="0 0 64 64" width="30" height="30" class="brand-svg">
@@ -67,6 +75,7 @@
 
     <div class="appcard">
       <main class="app">
+        <div id="rail-backdrop" class="rail-backdrop" hidden></div>
         <!-- One rail holds every session, running and finished. It used to be a
              running-only sidebar plus a full-width band pinned to the bottom of
              the window; the band read as a stray row and left the middle of the
