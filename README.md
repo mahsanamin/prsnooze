@@ -233,6 +233,7 @@ prsnooze deliberately doesn't auto-approve risky or large PRs — those come bac
 **How it works:**
 - A **🔒 Locked** chip sits in the top bar. Click it (or a locked Approve button) to get a prompt for the admin password.
 - The password is checked **server-side only** and never sent to the browser. On success the server sets a signed, `HttpOnly` cookie (a timestamped HMAC — no server-side session, survives restarts) and the browser is **🔓 Unlocked** for 1 hour.
+- Wrong guesses are **rate-limited per IP** — 5 consecutive failures locks the endpoint, doubling from 1 minute up to 30, and the correct password is refused while locked. Without this, a shared password on a page teammates can reach is guessable at network speed.
 - Unlock state is **per browser**: entering it in one browser doesn't unlock another, another machine, or an incognito window — each proves the password once. Cookies are also per-URL, so `localhost` and the proxy hostname unlock independently.
 - While unlocked, **✓ Approve PR** runs `gh pr review <pr-url> --approve` server-side under this machine's `gh` login (so `gh` must be installed + authenticated — no token/PAT needed). Every approve re-verifies the cookie (`POST /api/jobs/:id/approve` → 401 if locked). It's disabled for a PR you (that `gh` identity) authored, and becomes **✓ Approved** once done.
 

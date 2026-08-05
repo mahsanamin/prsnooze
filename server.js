@@ -260,10 +260,69 @@ app.get("/api/config", (req, res) => {
 });
 
 // Prove knowledge of the admin password → set the privilege cookie.
+// --- brute-force protection for the one password-gated endpoint ------------
+// /api/unlock is the only place a secret is checked, and it gates posting an
+// approval to GitHub as the host. Without a limit, anyone who can reach the page
+// can try passwords as fast as the network allows — and the whole point of
+// prsnooze is that the page is reachable by teammates.
+//
+// In-memory and per-IP: this is a single process on one machine, so there is no
+// shared store to coordinate with. Note that behind a reverse proxy every
+// request looks like it comes from the proxy unless `trust proxy` is set, in
+// which case a single attacker can lock the endpoint for everyone. That is the
+// deliberate trade: approve is a rare manual action, and the lockout expires.
+const UNLOCK_MAX_FAILS = 5;              // consecutive failures before locking
+const UNLOCK_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
+const UNLOCK_MAX_LOCK_MS = 30 * 60_000;  // ceiling
+const UNLOCK_FORGET_MS = 60 * 60_000;    // drop idle counters
+const unlockAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
+
+function unlockThrottle(ip) {
+  const now = Date.now();
+  // Opportunistic prune so a stream of distinct IPs can't grow this forever.
+  if (unlockAttempts.size > 1000) {
+    for (const [k, v] of unlockAttempts) if (now - v.seen > UNLOCK_FORGET_MS) unlockAttempts.delete(k);
+  }
+  const rec = unlockAttempts.get(ip);
+  if (!rec) return { blocked: false };
+  if (now - rec.seen > UNLOCK_FORGET_MS) { unlockAttempts.delete(ip); return { blocked: false }; }
+  if (rec.lockedUntil && rec.lockedUntil > now) {
+    return { blocked: true, retryAfterMs: rec.lockedUntil - now };
+  }
+  return { blocked: false };
+}
+
+function unlockFailed(ip) {
+  const now = Date.now();
+  const rec = unlockAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
+  rec.fails += 1;
+  rec.seen = now;
+  if (rec.fails >= UNLOCK_MAX_FAILS) {
+    const over = rec.fails - UNLOCK_MAX_FAILS;
+    rec.lockedUntil = now + Math.min(UNLOCK_BASE_LOCK_MS * 2 ** over, UNLOCK_MAX_LOCK_MS);
+  }
+  unlockAttempts.set(ip, rec);
+}
+
+function unlockSucceeded(ip) {
+  unlockAttempts.delete(ip);
+}
+
 app.post("/api/unlock", (req, res) => {
   if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const throttled = unlockThrottle(ip);
+  if (throttled.blocked) {
+    const secs = Math.ceil(throttled.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(secs));
+    return res.status(429).json({ error: `too many attempts — try again in ${secs}s`, retryAfterMs: throttled.retryAfterMs });
+  }
   const { password } = req.body || {};
-  if (!passwordMatches(password)) return res.status(401).json({ error: "incorrect password" });
+  if (!passwordMatches(password)) {
+    unlockFailed(ip);
+    return res.status(401).json({ error: "incorrect password" });
+  }
+  unlockSucceeded(ip);
   // No Secure flag: must also work over http://localhost. Over the proxy it's
   // already HTTPS end-to-end.
   res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
