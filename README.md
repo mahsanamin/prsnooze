@@ -94,7 +94,7 @@ sequenceDiagram
   S->>GH: fetch PR + base branch
   S->>S: clone/fetch repo, add worktree
   S->>CL: spawn claude in the worktree
-  CL-->>W: live progress via WebSocket
+  CL-->>W: live progress via SSE
   CL->>GH: post the review
   S->>S: clean up worktree
 ```
@@ -279,7 +279,7 @@ Point at one via `HERO_IMAGE=/heroes/pink-panther.svg`, or drop your own JPEG/PN
 | `bin/start.js` | Local preflight + bootstrap |
 | `bin/docker-server` | Docker dispatcher |
 | `Dockerfile`, `docker-compose.yml` | Container definition |
-| `server.js` | Express app, WebSocket, queue wiring |
+| `server.js` | Express app, SSE + WebSocket, queue wiring |
 | `lib/queue.js` | Concurrency-capped worker pool |
 | `lib/repo-lock.js` | Per-repo git serialization |
 | `lib/review-job.js` | Per-job orchestrator |
@@ -287,7 +287,7 @@ Point at one via `HERO_IMAGE=/heroes/pink-panther.svg`, or drop your own JPEG/PN
 | `lib/github.js` | PR URL parser + `gh` wrappers |
 | `lib/skill-resolver.js` | Finds the review skill |
 | `lib/claude-runner.js` | Spawns `claude`, parses stream-json |
-| `public/` | Web UI (vanilla JS + WebSocket) |
+| `public/` | Web UI (vanilla JS, SSE + WebSocket) |
 | `~/.prsnooze/` or `prsnooze-data` volume | Runtime state |
 
 </details>
