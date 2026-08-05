@@ -402,7 +402,7 @@ function rowStateText(rev) {
     case "approved": return "approved";
     case "changes_requested": return "changes";
     case "commented": return "commented";
-    case "no_new_findings": return "no changes";
+    case "no_new_findings": return "no post";
     case "skipped": return "skipped";
     default: return "done";
   }
@@ -678,14 +678,25 @@ function renderSummary(rev) {
       case "approved": lead = svgIcon("check") + "Approval posted to the PR — no critical or major issues, and small enough to auto-approve."; break;
       case "commented": lead = svgIcon("comment") + "Review posted to the PR."; break;
       case "changes_requested": lead = svgIcon("alert") + "Changes requested on the PR."; break;
-      case "no_new_findings": lead = svgIcon("circle") + "Nothing new — every concern was already covered, so no comment was posted."; break;
+      case "no_new_findings":
+        // Only claim nothing was posted when GitHub confirmed it. Unverified,
+        // say what we actually know: we didn't see a post.
+        lead = svgIcon("circle") + (rev.outcomeVerified === false
+          ? "No post detected — GitHub couldn't be checked, so something may have been posted."
+          : "No comment posted — every concern was already covered by the existing reviews.");
+        break;
       case "skipped": lead = svgIcon("skip") + escapeHtml(rev.skipReason || "Skipped."); break;
       default: lead = svgIcon("check") + "Finished.";
     }
     // What the review actually said, in both modes. It used to be Detailed-only,
     // which left Zen as a one-line verdict over an empty page — hiding the one
     // thing the user came to read. Detailed adds the activity log on top.
-    html = lead + (rev.summaryText ? `<div class="summary-detail">${mdLite(rev.summaryText)}</div>` : "");
+    const notes = [];
+    if (rev.outcomeDetail && rev.outcomeVerified) notes.push(`Confirmed on GitHub: ${escapeHtml(rev.outcomeDetail)}.`);
+    else if (rev.outcomeVerified === false && rev.outcome !== "no_new_findings") notes.push("Not confirmed with GitHub — the outcome shown is what the run appeared to do.");
+    html = lead
+      + (notes.length ? `<div class="verdict-note">${notes.join(" ")}</div>` : "")
+      + (rev.summaryText ? `<div class="summary-detail">${mdLite(rev.summaryText)}</div>` : "");
   }
   // Pulse the Activity header while the run is live — the section is collapsed
   // in Zen, and a still header gave no hint there was anything to open.
@@ -762,7 +773,14 @@ function handleEvent(rev, ev) {
     case "started": setState(rev, "running"); break;
     case "queued": setState(rev, "queued"); break;
     case "pr_meta": rev.prMeta = ev; renderHead(rev); renderStats(rev); renderLists(); break;
-    case "outcome_detected": rev.outcome = ev.outcome; renderHead(rev); renderSummary(rev); renderLists(); break;
+    case "outcome_detected":
+      rev.outcome = ev.outcome;
+      // A late outcome_detected can correct an earlier optimistic one — the
+      // server reconciles what was posted against GitHub before finishing.
+      if (typeof ev.verified === "boolean") rev.outcomeVerified = ev.verified;
+      if (ev.detail) rev.outcomeDetail = ev.detail;
+      renderHead(rev); renderSummary(rev); renderLists();
+      break;
     case "summary":
       if (ev.finalText) rev.summaryText = ev.finalText;
       if (ev.sessionId) rev.sessionId = ev.sessionId;

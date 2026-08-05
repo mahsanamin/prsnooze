@@ -595,6 +595,7 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
   font-size: 13.5px; line-height: 1.65; color: var(--muted);
   white-space: pre-wrap; overflow-wrap: break-word;
 }
+.verdict-note { margin-top: 6px; font-size: 12px; color: var(--faint); }
 .summary-detail strong { color: var(--text); font-weight: 700; }
 .summary-detail code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 1px 5px; border-radius: 5px; background: rgba(8, 9, 13, 0.7); border: 1px solid var(--border); color: var(--tool); }
 .summary-detail a { color: var(--info); text-decoration: none; border-bottom: 1px solid rgba(166, 176, 190, 0.32); overflow-wrap: anywhere; }
