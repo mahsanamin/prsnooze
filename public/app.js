@@ -38,7 +38,7 @@ const unlockCancel = $("unlock-cancel");
 
 const LS_SELECTED = "prsnooze:selected";
 const LS_SOUND = "prsnooze:sound";
-const LS_MODE = "prsnooze:mode";
+const LS_ACTIVITY_OPEN = "prsnooze:activityOpen";
 const LS_LASTSEEN = "prsnooze:lastSeen";
 
 const PHASES = [
@@ -52,7 +52,10 @@ const phaseIndex = (p) => PHASES.findIndex((x) => x.key === p);
 
 const reviews = new Map();
 let selectedId = null;
-let mode = localStorage.getItem(LS_MODE) === "detailed" ? "detailed" : "zen";
+// Whether the Activity log is expanded. Remembered, because whichever way you
+// like to work is how you like to work — it replaced a Zen/Detailed toggle that
+// only ever controlled this one thing.
+let activityOpen = localStorage.getItem(LS_ACTIVITY_OPEN) === "1";
 let hostName = "";
 let isHost = false;
 let hostLogin = null;
@@ -425,7 +428,7 @@ function selectReview(id) {
   if (!rev.panelLoaded && !rev.es) loadFinishedLog(rev);
   // Only worth asking about a finished review that has a session to resume.
   if (rev.state === "done" && rev.sessionId && !rev.resume) loadResumeCheck(rev);
-  applyMode(rev);
+  applyActivityState(rev);
   renderLists();
   updateSubmitButton();
   scrollLog(rev);
@@ -444,12 +447,15 @@ function ensurePanel(rev) {
   const sect = document.createElement("div"); sect.className = "sect";
   sect.innerHTML = `<div class="sect-h" role="button" tabindex="0"><span class="chev">${svgIcon("chevron")}</span>` +
     `<span class="sect-t">Activity</span><span class="live-dot" aria-hidden="true"></span>` +
+    `<span class="sect-peek"></span>` +
     `<span class="count">0 events</span></div><div class="sect-body"><ol class="log"></ol></div>`;
   // Activity sits above the review text: while a run is live the log is the
   // thing worth watching, and the comments only exist once it's done.
   panel.append(head, submeta, stepper, stats, sect, summary);
   panels.appendChild(panel);
-  rev.els = { ...(rev.els || {}), panel, head, submeta, stepper, stats, summary, sect, log: sect.querySelector(".log"), count: sect.querySelector(".count") };
+  rev.els = { ...(rev.els || {}), panel, head, submeta, stepper, stats, summary, sect,
+    log: sect.querySelector(".log"), count: sect.querySelector(".count"), peek: sect.querySelector(".sect-peek"),
+    body: sect.querySelector(".sect-body") };
   renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev);
   return panel;
 }
@@ -591,18 +597,6 @@ function renderHead(rev) {
       }
     }
   }
-  const modes = document.createElement("div");
-  modes.className = "modes";
-  for (const m of ["zen", "detailed"]) {
-    const mb = document.createElement("button");
-    mb.dataset.mode = m;
-    if (mode === m) mb.className = "on";
-    mb.appendChild(iconEl(m === "zen" ? "moon" : "wrench"));
-    mb.appendChild(document.createTextNode(m === "zen" ? "Zen" : "Detailed"));
-    mb.title = m === "zen" ? "Just the verdict" : "Verdict plus the full activity log";
-    modes.appendChild(mb);
-  }
-  head.appendChild(modes);
   renderPrLine(rev);
 }
 
@@ -708,9 +702,9 @@ function renderSummary(rev) {
       case "skipped": lead = svgIcon("skip") + escapeHtml(rev.skipReason || "Skipped."); break;
       default: lead = svgIcon("check") + "Finished.";
     }
-    // What the review actually said, in both modes. It used to be Detailed-only,
-    // which left Zen as a one-line verdict over an empty page — hiding the one
-    // thing the user came to read. Detailed adds the activity log on top.
+    // What the review actually said. This used to be hidden behind a Detailed
+    // mode, which left the default view as a one-line verdict over an empty
+    // page — hiding the one thing the user came to read.
     const notes = [];
     if (rev.outcomeDetail && rev.outcomeVerified) notes.push(`Confirmed on GitHub: ${escapeHtml(rev.outcomeDetail)}.`);
     else if (rev.outcomeVerified === false && rev.outcome !== "no_new_findings") notes.push("Not confirmed with GitHub — the outcome shown is what the run appeared to do.");
@@ -739,13 +733,32 @@ function mdLite(text) {
   return h;
 }
 
-function applyMode(rev) {
-  if (rev.els?.sect) rev.els.sect.classList.toggle("open", mode === "detailed");
+// Apply the remembered Activity state to a panel. Opening jumps to the newest
+// events — the top of a 200-line log is the least interesting part of it.
+function applyActivityState(rev) {
+  const sect = rev.els?.sect;
+  if (!sect) return;
+  sect.classList.toggle("open", activityOpen);
+  if (activityOpen) scrollLog(rev);
+  else renderPeek(rev);
 }
-function setMode(m) {
-  mode = m;
-  localStorage.setItem(LS_MODE, m);
-  for (const r of reviews.values()) { if (r.els?.head) { renderHead(r); renderSummary(r); } applyMode(r); }
+function setActivityOpen(open, rev) {
+  activityOpen = !!open;
+  localStorage.setItem(LS_ACTIVITY_OPEN, activityOpen ? "1" : "0");
+  for (const r of reviews.values()) applyActivityState(r);
+  if (rev && activityOpen) scrollLog(rev);
+}
+
+// Collapsed, the header still shows the last line of the log, so a running
+// review says what it's doing without being expanded.
+function renderPeek(rev) {
+  const peek = rev.els?.peek;
+  if (!peek) return;
+  const last = rev.els?.log?.lastElementChild;
+  const body = last?.querySelector(".ev-body");
+  const text = (body?.textContent || last?.textContent || "").replace(/\s+/g, " ").trim();
+  peek.textContent = text;
+  peek.hidden = !text;
 }
 
 async function loadFinishedLog(rev) {
@@ -850,7 +863,7 @@ function finish(rev, state) {
   // job whose backlog happens to include an earlier terminal event (verify re-run).
   if (!rev.replaying && rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
   renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
-  if (rev.id === selectedId) { updateSubmitButton(); applyMode(rev); }
+  if (rev.id === selectedId) { updateSubmitButton(); applyActivityState(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   updateStatusLight();
   // No refreshList here: the server broadcasts a fresh job-list snapshot over
@@ -872,10 +885,12 @@ panels.addEventListener("click", (e) => {
     verifyReview(rs.dataset.resumeId, !!rev?.resumeArmed);
     return;
   }
-  const mb = e.target.closest(".modes button");
-  if (mb) { setMode(mb.dataset.mode); return; }
   const sh = e.target.closest(".sect-h");
-  if (sh) { sh.parentElement.classList.toggle("open"); }
+  if (sh) {
+    const panel = sh.closest(".review-panel");
+    const rev = panel ? reviews.get(panel.dataset.jobId) : null;
+    setActivityOpen(!sh.parentElement.classList.contains("open"), rev);
+  }
 });
 
 async function approveReview(id, btn) {
@@ -1121,9 +1136,20 @@ function appendLog(rev, ev) {
   li.dataset.sig = sig;
   li.innerHTML = inner;
   log.appendChild(li);
-  scrollLog(rev);
+  // Follow the tail only when already pinned to the bottom, so reading back
+  // through history isn't yanked away by new events.
+  const body = rev.els?.body;
+  const pinned = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  if (pinned) scrollLog(rev);
+  if (!activityOpen) renderPeek(rev);
 }
-function scrollLog(rev) { if (rev.id === selectedId && rev.els?.log) rev.els.log.scrollTop = rev.els.log.scrollHeight; }
+// The log scrolls inside its own box — the panel itself no longer scrolls, so a
+// 200-event review can't turn the whole page into one enormous scrollbar.
+function scrollLog(rev) {
+  const body = rev.els?.body;
+  if (!body || rev.id !== selectedId) return;
+  body.scrollTop = body.scrollHeight;
+}
 
 // ------------------------------------------------------------ status light --
 // One place that maps a review's state to how it looks. `ico` names an SVG for

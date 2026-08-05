@@ -496,11 +496,16 @@ main.app { flex: 1; min-height: 0; display: flex; }
 /* Nothing selected: panels still hold their (hidden) children, and an empty
    flex:1 box would shove the hero stage off-centre. */
 .hero-mode .panels { display: none; }
-.review-panel { display: none; flex: 1; flex-direction: column; min-width: 0; padding: 18px 22px; overflow-y: auto; }
+/* The two long children — the activity log and the review text — each scroll
+   inside their own box, so neither can inflate the panel: a 200-event review no
+   longer turns the page into one enormous scrollbar. The panel keeps its own
+   scroll purely as an overflow valve, because on a short window the fixed header
+   (title, PR line, stages, stat tiles) can exceed the panel on its own, and
+   clipping that would put content out of reach entirely. */
+.review-panel { display: none; flex: 1; flex-direction: column; min-width: 0; min-height: 0; padding: 18px 22px; overflow-y: auto; }
 .review-panel.active { display: flex; }
-/* The panel is a flex column that scrolls. Its children must NOT flex-shrink,
-   or a long Activity log gets compressed to fit (and .sect's overflow:hidden
-   clips it) instead of overflowing so the panel can scroll. */
+/* Head, meta, pipeline and stats keep their natural height; the two scrollable
+   regions below opt back into flexing. */
 .review-panel > * { flex-shrink: 0; }
 /* Cap the reading column and centre it. Full-bleed cards on a 1600px window
    leave a void underneath that reads as a broken grid; a measured column makes
@@ -546,11 +551,6 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .resume-why { order: 9; flex: 1 1 100%; margin-top: -2px; font-size: 12px; line-height: 1.5; color: var(--faint); }
 .resume-why.yes { color: var(--green); }
 
-.modes { margin-left: auto; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8, 9, 13, 0.55); }
-.modes button { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--muted); padding: 5px 12px; font-size: 12.5px; cursor: pointer; font-weight: 600; border-radius: 7px; }
-.modes button:hover { color: var(--text); }
-.modes button.on { background: linear-gradient(180deg, #ffc072, var(--accent)); color: var(--accent-ink); }
-
 /* --------------------------------------------------------- phase pipeline -- */
 /* Five equal segments with a label under each read as a tab bar. This is one
    line of small text plus one thin bar — clearly progress, not navigation. */
@@ -578,12 +578,12 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 /* Facts a finished review carries — diff size, prod-only size, target branch,
    run time, turns, cost. Before this, a done review in Zen mode was a headline
    over an empty page. */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 7px; margin-bottom: 12px; }
 .stats[hidden] { display: none; }
-.stat { padding: 9px 12px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); min-width: 0; }
+.stat { padding: 7px 10px 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); min-width: 0; }
 .stat-h { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--faint); }
 .stat-h .ico { width: 12px; height: 12px; }
-.stat-v { margin-top: 4px; font-size: 15px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-v { margin-top: 2px; font-size: 14.5px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stat-s { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stat-v.mono, .stat-s.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; font-weight: 600; }
 
@@ -592,7 +592,7 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .card.summary > .ico { display: inline-block; vertical-align: -3px; margin-right: 9px; width: 17px; height: 17px; }
 .card.summary { color: var(--muted); }
 .card.summary b { color: var(--green); font-weight: 700; }
-.card.summary { border: 1px solid var(--border); border-left: 3px solid var(--green); background: var(--panel); }
+.card.summary { flex: 1 1 auto; min-height: 160px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-left: 3px solid var(--green); background: var(--panel); }
 .card.summary.run { border-left-color: var(--accent); }
 .card.summary.warn { border-left-color: var(--yellow); }
 .card.summary b { color: var(--green); }
@@ -614,7 +614,10 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .summary-detail a:hover { color: var(--accent); border-bottom-color: rgba(255, 180, 87, 0.5); }
 
 /* ----------------------------------------------- collapsible activity sect */
-.sect { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; background: var(--panel); }
+/* Collapsed: header only, sized to content. Open: takes half the remaining
+   space and scrolls internally. */
+.sect { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; background: var(--panel); }
+.sect.open { flex: 1 1 50%; min-height: 200px; }
 .sect .sect-h { display: flex; align-items: center; gap: 9px; padding: 11px 15px; cursor: pointer; user-select: none; font-weight: 650; font-size: 14px; background: var(--panel-2); }
 .sect .sect-h:hover { background: var(--panel-3); }
 .sect .sect-h .chev { display: flex; align-items: center; transition: transform 0.14s ease; color: var(--faint); }
@@ -623,6 +626,16 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .sect.open .sect-h .chev { transform: rotate(90deg); }
 .sect .sect-h .count { margin-left: auto; font-size: 11.5px; color: var(--faint); font-weight: 400; }
 .sect .sect-t { flex: 0 0 auto; }
+/* Collapsed, the header carries the last log line so a running review says what
+   it's doing without being opened. */
+.sect-peek {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px; font-weight: 400; color: var(--faint);
+  padding-left: 4px;
+}
+.sect.open .sect-peek, .sect-peek[hidden] { display: none; }
 /* Live marker: only while a run is in flight. */
 .live-dot { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .sect.live .live-dot { display: block; animation: pulse 1.3s ease-in-out infinite; }
@@ -630,7 +643,7 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .sect.live .sect-h .chev { color: var(--accent); }
 .sect.live:not(.open) { border-color: rgba(255, 180, 87, 0.4); }
 .sect .sect-body { display: none; padding: 6px; }
-.sect.open .sect-body { display: block; }
+.sect.open .sect-body { display: block; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 
 /* ------------------------------------------------------ log event stream -- */
 .log { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
