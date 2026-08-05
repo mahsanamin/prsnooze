@@ -2,7 +2,7 @@
 
 > **Paste a PR link. Get a real review on GitHub about a minute later.** Nobody had to be asked.
 
-![prsnooze showing a finished review: the PR, what it checked, and the review it posted](docs/screenshot.png)
+![prsnooze showing a finished review: the PR, what it checked, and the review it posted](docs/prsnooze-2026-08.png)
 
 ## The problem
 
