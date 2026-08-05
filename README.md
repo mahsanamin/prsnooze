@@ -1,308 +1,188 @@
 # prsnooze
 
-> 👀 You snooze. It reviews. Get your PR reviewed without pinging a single human.
+> **Paste a PR link. Get a real review on GitHub about a minute later.** Nobody had to be asked.
 
-![prsnooze reviewing a pull request while the host is asleep](docs/screenshot.png)
+![prsnooze showing a finished review: the PR, what it checked, and the review it posted](docs/screenshot.png)
 
-## What is this?
+## The problem
 
-**prsnooze is an always-on PR reviewer that runs on a teammate's machine.**
+Your PR is ready. You drop it in Slack: *"anyone free to review this?"*
 
-Your PR is ready and you want eyes on it. The usual move is to ping someone: "can you review this?" But they are in a meeting, heads-down, or asleep. Your PR waits.
+Then you wait. Not because the review is hard — because getting a person's attention is hard. They're in a meeting, heads-down, or asleep. A ten-minute review takes half a day to *start*.
 
-With prsnooze you skip the ask entirely. You open your teammate's prsnooze page, paste your PR URL, and hit **Review**. It clones the repo, reads the diff, reviews it against *that project's own review standards*, and posts the review comments straight back to the GitHub PR. As them. While they sleep.
+## What prsnooze is
 
-Under the hood it runs **Claude Code headlessly** on the host machine (already logged into `claude`, `gh`, and git), so the review is a real agentic read of the code, not a regex linter.
+One person on your team runs prsnooze on their machine. It's a web page.
 
-## The shift
+Anyone on your network opens that page, pastes a GitHub PR URL, and clicks **Review PR**. A minute later the review is on the PR — specific comments about the actual diff, posted under that person's GitHub account. If the change is genuinely small and safe, it approves it outright.
 
 | Before | After |
 |---|---|
-| "Hey, can you review my PR when you get a sec?" | Paste the PR URL into prsnooze. Done. |
-| Wait hours for a human to be free | First-pass review posted in under a minute |
-| Reviewer context-switches out of their work | Reviewer is asleep and never interrupted |
-| Review quality depends on who's around | Every review runs the project's review playbook |
+| "Can someone review my PR?" → wait | Paste the link. Done. |
+| Hours before the first look | First-pass review in about a minute |
+| Your reviewer context-switches out of their work | Your reviewer isn't interrupted at all |
+| Review quality depends on who's free | Every review runs the same playbook — your project's own |
 
-It does not replace a human approver on risky changes. It clears the queue of "this is probably fine, just give it a look" PRs so humans spend their attention where it matters. Small, clean, low-risk PRs can even be **auto-approved** (see [auto-approval](#how-auto-approval-decides)).
+## Why not just buy a review bot
 
-## How it works
+**Because your team is already paying for Claude, and that budget is sitting idle.**
 
-```mermaid
-sequenceDiagram
-  participant U as Teammate
-  participant W as Web UI
-  participant S as Server
-  participant CL as claude -p
-  participant GH as GitHub
+prsnooze doesn't have its own account, key, or bill. It drives the `claude` CLI that the host is *already logged into* — their existing subscription, on their own machine. Nothing new to buy, no per-PR metering, no finance conversation.
 
-  U->>W: paste PR URL
-  W->>S: POST /api/review
-  S->>GH: gh pr view (resolve base branch)
-  S->>S: clone or fetch repo, git worktree add
-  S->>CL: spawn in worktree (stream-json, auto-approval)
-  CL-->>W: live tool calls via SSE
-  CL->>GH: skill posts review
-  S->>S: remove worktree (success) / keep (failure)
-```
+It's also not an autonomous agent wandering your repos. It runs when a human asks, on the one PR they named, and stops. You can watch every command it runs, live.
 
-Project rules are honored automatically. The worktree is a full checkout, so `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, and `.claude/settings.json` from the repo are picked up by Claude Code as usual, and the prompt explicitly nudges Claude to follow them.
+| | A hosted review bot | prsnooze |
+|---|---|---|
+| Cost | org API key, billed per PR | nothing extra — uses the Claude plan you already have |
+| Runs when | on every push, whether you wanted it or not | when someone pastes a link |
+| Reviews against | its own generic idea of "good code" | your project's `.claude/skills/review-pr` |
+| Your code goes | to a third-party service | nowhere — it's your teammate's laptop |
 
-## ⚠️ Read this first: safety
-
-prsnooze runs **`claude --dangerously-skip-permissions`**. That means:
-
-- Claude has full file, network, and tool access inside the worktree with **no confirmation prompts**.
-- Anyone who can reach the web UI can trigger a Claude session on your machine.
-- The host's `gh` identity is who posts reviews on GitHub. Anyone using prsnooze is effectively reviewing *as you*.
-
-To run this safely:
-
-1. **Do not expose the web UI to the public internet.** Bind it to your LAN or Tailscale. There is no built-in auth.
-2. **Use a fine-grained GitHub PAT**, not a classic admin token, scoped to the specific repos you want reviewed, with "Pull requests: Read and write" plus "Contents: Read". Set it via `gh auth login` (pick "Token").
-3. **Vet the review skill.** The review skill is what actually reads code and posts comments. Read it before trusting it.
-4. **Run it on a machine you do not mind issuing networked actions on your behalf.**
-
-**Use at your own risk.**
-
-## Quickstart
-
-### Local (no Docker)
+## Try it in two minutes
 
 ```sh
-git clone https://github.com/<you>/prsnooze.git
+git clone https://github.com/mahsanamin/prsnooze.git
 cd prsnooze
 npm install
 npm start
 ```
 
-`npm start` runs preflight checks (Node, git, claude, claude login, gh, gh auth, GitHub SSH, data dir writable), prints the safety warning, and starts the server. Then open the URL it prints (default **http://localhost:8284**).
+`npm start` checks your setup, tells you anything that's missing, and prints a URL — by default **http://localhost:8284**. Open it, paste a PR link, watch it work.
 
-Runtime data lives in `~/.prsnooze/` (clones, worktrees, job state), kept out of the project tree.
+That's the whole thing. To let colleagues use it, share that URL over your LAN or Tailscale — but read the next section first.
 
-### Docker (recommended for a shared deployment)
+## ⚠️ Read this before you share the URL
 
-The image bundles `node`, `git`, `gh`, and Claude Code, so colleagues can deploy without installing any of those locally.
+prsnooze runs `claude --dangerously-skip-permissions`. That means:
 
-```sh
-git clone https://github.com/<you>/prsnooze.git
-cd prsnooze
+- Claude can read, write and run anything inside the checkout, with no confirmation prompts.
+- **Anyone who can reach the page can start a Claude session on your machine.**
+- Reviews are posted as *you*. Anyone using it is reviewing under your GitHub identity.
 
-bin/docker-server start          # build + start in background
-bin/docker-server claude-login   # one-time: complete Claude OAuth
-bin/docker-server gh-login       # one-time: gh auth (use a fine-grained PAT)
+So:
+
+1. **Don't put it on the public internet.** LAN or Tailscale only. There is no login on the page.
+2. **Use a fine-grained GitHub token** scoped to the repos you actually want reviewed (Pull requests: read+write, Contents: read). Not a classic all-repos token.
+3. Run it on a machine you don't mind seeing network activity from.
+
+## What it does, step by step
+
+```mermaid
+sequenceDiagram
+  participant U as Teammate
+  participant P as prsnooze
+  participant C as claude (your plan)
+  participant G as GitHub
+
+  U->>P: paste PR URL
+  P->>G: read the PR (gh pr view)
+  P->>P: clone/fetch, git worktree add
+  P->>C: review this diff, using this project's rules
+  C-->>U: live activity, streamed to the page
+  C->>G: post the review
+  P->>G: confirm what was actually posted
+  P->>P: remove the worktree
 ```
 
-Then visit **http://localhost:8284**.
+Because it reviews inside a real checkout of your repo, your `CLAUDE.md`, `AGENTS.md` and `.claude/skills/` are all picked up automatically.
 
-| Command | Purpose |
+## When it approves on its own
+
+Auto-approve (`AUTO_APPROVE=true`, the default) fires only when **all** of these hold:
+
+1. The reviewer found no critical and no major issues.
+2. Its **risk score** for the diff is ≤ 20.
+3. Nothing in the diff looks like a real behaviour change in a scary place.
+
+How the score works — the reviewer looks for genuine behaviour changes, not just scary-looking filenames (a typo fix in an auth file is not an auth change):
+
+| Signal | Score |
 |---|---|
-| `bin/docker-server start` | build (if needed) + start in background |
-| `bin/docker-server stop` | stop the container |
-| `bin/docker-server restart` | restart without rebuild |
-| `bin/docker-server rebuild` | rebuild image, recreate container |
-| `bin/docker-server ssh` | drop into a bash shell inside the container |
-| `bin/docker-server claude-login` | run `claude` interactively to log in |
-| `bin/docker-server gh-login` | run `gh auth login` |
-| `bin/docker-server logs` | tail container logs |
-| `bin/docker-server status` | show container status |
-| `bin/docker-server url` | print the listen URL |
+| Auth / payments / DB migration — real behaviour change | +50 each |
+| CI/CD change, public API break | +30 each |
+| Real refactor, or a new public endpoint | +20 each |
+| Dependency bump — major / minor / patch | +25 / +10 / +2 |
+| Unclear blast radius | +15 |
+| *Comments, formatting or renames only* | −25 |
+| *Tests or docs only* | −20 |
+| *Matching test file also changed* | −15 |
+| *New tests covering the changed paths* | −10 |
 
-Each is also available as `npm run docker:<command>`.
+| Total | What it does |
+|---|---|
+| ≤ 20 | approves |
+| 21 – 60 | comments |
+| > 60 | comments, with a high-risk banner |
 
-Auth and data persist in named docker volumes (`prsnooze-claude`, `prsnooze-gh`, `prsnooze-data`), so `rebuild` does **not** wipe your login or cached repos. To reset everything:
+If auth, payments or a migration really changed, the reducers are capped at −20 — so a genuine top-3 change never auto-approves. When it can't tell, it comments. Set `AUTO_APPROVE=false` and it never approves anything.
 
-```sh
-docker compose down -v
-docker volume rm prsnooze-claude prsnooze-gh prsnooze-data
-```
+## Reviews follow your project's rules
 
-## Requirements
+prsnooze looks for a review playbook in this order and uses the first it finds:
+
+1. `<repo>/.claude/skills/review-pr/SKILL.md` — **your project's own**
+2. `~/.claude/skills/review-pr/SKILL.md` — the host's personal one
+3. `skills/default-review/SKILL.md` — bundled here, so there's always a floor
+
+(`aa-review-pr` works as an alternate name at both levels.) The page shows which one ran, tagged `[project]` / `[user]` / `[bundled]`. To make reviews match how your team actually reviews, drop a `review-pr/SKILL.md` into your repo — nothing else to configure.
+
+## Someone replied to the review — now what
+
+Open the finished review and press **Resume review**. It continues the *same* Claude session, so it already knows what it said the first time, and re-checks the current state: new commits, and replies to its own comments. Each earlier point comes back as **addressed**, **answered** (the author was right — it concedes), or **still open**.
+
+Before it runs, it checks whether that's worth doing and tells you: *"2 new commits and 3 replies to your comments since your review."* If there's nothing new, or the PR is already approved, it says so — **Force resume** runs it anyway. On a merged or closed PR, force is disabled: there's no PR left to review.
+
+## Setup, properly
 
 | | Local | Docker |
 |---|---|---|
-| Node.js ≥ 20 | host needs it | bundled |
-| `claude` CLI + login | host needs it | bundled, log in via `docker-server claude-login` |
-| `gh` CLI + auth | host needs it | bundled, log in via `docker-server gh-login` |
-| git + SSH | host needs it (SSH for clones) | bundled, uses HTTPS via gh token |
-| Review skill | optional (bundled default used if none) | optional (bundled default used if none) |
+| Node.js ≥ 20 | you need it | bundled |
+| `claude` CLI, logged in | you need it | bundled — `bin/docker-server claude-login` |
+| `gh` CLI, authenticated | you need it | bundled — `bin/docker-server gh-login` |
+| git + SSH key | you need it | bundled (uses the gh token over HTTPS) |
 
-## GitHub authentication
+Docker is the easier route for a machine several people will use, since it brings its own `node`, `git`, `gh` and Claude Code:
 
-prsnooze posts reviews **as the user the host is logged in as**. Use the smallest credential that works:
+```sh
+bin/docker-server start          # build + run in the background
+bin/docker-server claude-login   # once: sign in to Claude
+bin/docker-server gh-login       # once: gh auth (paste a fine-grained PAT)
+```
 
-- **Recommended: a fine-grained Personal Access Token** (https://github.com/settings/personal-access-tokens), scoped to the specific repos you want reviewed, with:
-  - **Pull requests: Read and write** (post review comments)
-  - **Contents: Read** (read the diff)
-- Set it via `gh auth login`, choose "Paste an authentication token", and paste the PAT.
-- Avoid **classic** PATs unless you have no choice. They grant access to all your repos.
+Then open **http://localhost:8284**. Other commands: `stop`, `restart`, `rebuild`, `logs`, `status`, `ssh`, `url` — all but `url` also work as `npm run docker:<command>`. Logins and cached repos live in docker volumes, so `rebuild` doesn't sign you out.
 
-If you clone over SSH (local mode), make sure your SSH key is registered: https://github.com/settings/keys.
+Runtime data (clones, worktrees, past reviews) lives in `~/.prsnooze/`, outside the project.
 
 ## Configuration
 
-Defaults live in `.env.example`. Anything in `.env` overrides them.
+Everything has a working default. Copy `.env.example` to `.env` only if you want to change something.
 
-| Variable | Default | Purpose |
+| Variable | Default | What it does |
 |---|---|---|
 | `PORT` | `8284` | HTTP port |
-| `PRSNOOZE_HOME` | `~/.prsnooze` | Root for repos / worktrees / outputs |
-| `REPOS_DIR` | `$PRSNOOZE_HOME/repos` | Where repos are cloned |
-| `WORKTREES_DIR` | `$PRSNOOZE_HOME/worktrees` | Where worktrees are added |
-| `OUTPUTS_DIR` | `$PRSNOOZE_HOME/outputs` | Where job state is persisted |
-| `KEEP_WORKTREES_ON_SUCCESS` | `false` | If `true`, keep worktrees after a successful review |
-| `CLAUDE_BIN` | `claude` | Path to the claude CLI |
-| `AUTO_APPROVE` | `true` | If `true`, the reviewer **approves** PRs whose risk score is ≤20 and have no critical/major findings. See [How auto-approval decides](#how-auto-approval-decides). If `false`, every review is `--comment`. |
-| `CONFIDENCE_THRESHOLD` | `80` | Noise filter: findings below this confidence are dropped. The project's review skill takes precedence if it defines its own filter. Set `0` to disable. |
-| `SKIP_IF_ALREADY_REVIEWED` | `true` | If your gh user already posted a review on the same commit SHA, skip without spawning Claude. Prevents accidental double-reviews on resubmits. |
-| `HERO_IMAGE` | `/heroes/sleepy-cat.svg` | Landscape image on the home page (path or URL) |
+| `AUTO_APPROVE` | `true` | Allow it to approve clean, low-risk PRs. `false` = always just comment. |
+| `MAX_CONCURRENT_REVIEWS` | `1` | Reviews at once. Extra submissions queue. |
+| `CONFIDENCE_THRESHOLD` | `80` | Drop findings below this confidence. `0` = show everything. |
+| `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
+| `PRSNOOZE_ADMIN_PASSWORD` | *unset* | Enables the manual **Approve PR** button (see below). |
+| `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
+| `CLAUDE_BIN` | `claude` | Path to the claude CLI, if it isn't on `PATH`. |
+| `KEEP_WORKTREES_ON_SUCCESS` | `false` | Keep the checkout after a successful review (for debugging). |
+| `HERO_IMAGE` | *unset* | Optional background image. Unset, the page draws its own night sky. |
 
-### How auto-approval decides
+## Approving by hand
 
-Auto-approve fires (`gh pr review --approve`) only when **all** of the following hold:
+Risky or large PRs come back as *commented* on purpose — the merge decision stays with a human. On any finished review there's an **Approve PR** button, gated by a shared password so it works over a proxy as well as on localhost.
 
-1. `AUTO_APPROVE=true` in your config.
-2. The reviewer found no critical and no major issues.
-3. The **risk score** (computed by the reviewer from the diff) is ≤ 20.
+Set `PRSNOOZE_ADMIN_PASSWORD` to switch it on (leave it unset and approving is disabled entirely). The password is only ever checked on the server; unlocking sets a signed one-hour cookie per browser. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30 — a shared password on a page your team can reach is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
 
-The reviewer walks a rubric in the prompt:
+## When something goes wrong
 
-**Step 1 — Detect red-flag hits (real behavior changes, not adjacency).**
-A typo fix in an auth file is *not* an auth hit. A permission-check change *is*. Same idea for migrations (SQL comment vs. new DDL), refactors (rename vs. behavior change), dep bumps (patch vs. major).
-
-**Step 2 — Score the hits.**
-
-| Category | Weight |
-|---|---|
-| Auth / payments / DB migration (real behavior change) | +50 each |
-| CI/CD, public-API break | +30 each |
-| Real refactor | +20 |
-| New endpoint / public API added | +20 |
-| Dep bump — major / minor / patch | +25 / +10 / +2 |
-| Unbounded blast radius (per unclear scope) | +15 |
-
-Reducers (subtract from score):
-
-| Signal | Reduction |
-|---|---|
-| Diff is comments / formatting / renames only | −25 |
-| Diff is test-files or docs only | −20 |
-| Matching-name test files also changed (`Foo.java`↔`FooTest.java`, `foo.ts`↔`foo.test.ts`, etc.) | −15 |
-| New tests added exercising the changed paths | −10 |
-
-**Reducer cap:** if any of auth/payments/DB-migration fired, reducers can subtract at most −20 total. A real top-3 change never auto-approves.
-
-**Step 3 — Decide.**
-
-| Score | Action |
-|---|---|
-| ≤ 20 | `gh pr review --approve` |
-| 21 – 60 | `gh pr review --comment` |
-| > 60 | `gh pr review --comment` with a ⚠️ **high-risk** banner in the body |
-
-Findings override the score: any critical/major finding forces `--comment` regardless of score.
-
-The reviewer emits a rubric line the UI parses:
-
-```
-APPROVAL: comment — score=50, hits=[T1], reducers=[]
-```
-
-**Override — "when in doubt, comment."** If the reviewer is uncertain whether a change is a real hit vs. adjacency, or whether the blast radius is bounded, it errs toward hitting it and toward unbounded.
-
-#### Test-file detection
-
-A file is classified as **test code** (used for the prod/test breakdown shown in the UI, and for the matching-name test reducer) if its path matches any of:
-
-- `tests/`, `test/`, `__tests__/`, `spec/`, `e2e/`, `cypress/`, `integration-tests/`, `src/test/`
-- `*.test.{js,jsx,ts,tsx,mjs,cjs}`, `*.spec.{js,jsx,ts,tsx,mjs,cjs}`
-- `*_test.go`
-- `test_*.py`, `*_test.py`
-- `*_spec.rb`
-- `*Tests.{java,kt,scala,groovy}`, `*Test.{java,kt,scala,groovy}`, `*Spec.{java,kt,scala,groovy}`, `*IntegrationTests.{java,kt,scala,groovy}`
-
-Everything else counts as production code. If your project uses a non-standard test layout, edit `TEST_PATH_PATTERNS` in `lib/github.js`.
-
-### Customizing the hero image
-
-Three SVG defaults ship in `public/heroes/`:
-
-| Path | Style |
-|---|---|
-| `/heroes/sleepy-cat.svg` | Orange tabby curled up under a starry sky (default) |
-| `/heroes/pink-panther.svg` | Smug pink long-cat. "cool. calm. reviewing." |
-| `/heroes/moon-night.svg` | Crescent moon with stars and rolling hills |
-
-To use one: set `HERO_IMAGE=/heroes/pink-panther.svg` in `.env`.
-
-To use **your own**: drop a JPEG/PNG/SVG into `public/heroes/` and point at it (`HERO_IMAGE=/heroes/my-cat.jpg`), or use any public URL (`HERO_IMAGE=https://i.example.com/my-banner.jpg`). Aim for a landscape aspect ratio (~16:7 or wider).
-
-## Review skills
-
-prsnooze inlines a review skill's body into the prompt at runtime. (Claude Code can't reliably dispatch a skill marked `disable-model-invocation: true` via the Skill tool, so inlining is bulletproof.)
-
-Resolution order, first hit wins:
-
-1. `<worktree>/.claude/skills/aa-review-pr/SKILL.md` (project)
-2. `<worktree>/.claude/skills/review-pr/SKILL.md` (project, alternate name)
-3. `~/.claude/skills/aa-review-pr/SKILL.md` (your user-level skill)
-4. `~/.claude/skills/review-pr/SKILL.md`
-5. **`<prsnooze>/skills/default-review/SKILL.md`** (bundled with this repo)
-
-The bundled default always exists, so it is the floor: every review runs a structured playbook, never a vibes-only "do a thoughtful review." It is built for headless use: no interactive prompts, severity-tagged findings, an explicit "post exactly once" guard, and compatibility with prsnooze's auto-approve policy.
-
-To customize per project, drop a `review-pr/SKILL.md` (or `aa-review-pr/SKILL.md`) into your project's `.claude/skills/`. prsnooze picks it up automatically. The web UI's `skill_resolved` event tags the source as `[project]` / `[user]` / `[bundled]` so you can tell at a glance which playbook ran.
-
-## Concurrency
-
-One review at a time by default — additional submissions queue FIFO, and the topbar shows queue depth. To review several PRs at once, set **`MAX_CONCURRENT_REVIEWS`** to the number you want (e.g. `3`). Each review gets its own worktree and Claude session; only the quick per-repo git prep (`fetch` + `worktree add`) takes turns, so same-repo reviews never race on the shared clone.
-
-## Manual approve (password-gated)
-
-prsnooze deliberately doesn't auto-approve risky or large PRs — those come back as *commented*, leaving the merge decision to a human. A manual **✓ Approve PR** button appears on any finished review that wasn't auto-approved, gated behind a shared password so it works whether you're on `localhost` or reaching prsnooze through a reverse proxy.
-
-**Setup:** set `PRSNOOZE_ADMIN_PASSWORD` in your env/`.env`. Leave it unset and approve is disabled entirely (the button explains it's off).
-
-**How it works:**
-- A **🔒 Locked** chip sits in the top bar. Click it (or a locked Approve button) to get a prompt for the admin password.
-- The password is checked **server-side only** and never sent to the browser. On success the server sets a signed, `HttpOnly` cookie (a timestamped HMAC — no server-side session, survives restarts) and the browser is **🔓 Unlocked** for 1 hour.
-- Wrong guesses are **rate-limited per IP** — 5 consecutive failures locks the endpoint, doubling from 1 minute up to 30, and the correct password is refused while locked. Without this, a shared password on a page teammates can reach is guessable at network speed.
-- Unlock state is **per browser**: entering it in one browser doesn't unlock another, another machine, or an incognito window — each proves the password once. Cookies are also per-URL, so `localhost` and the proxy hostname unlock independently.
-- While unlocked, **✓ Approve PR** runs `gh pr review <pr-url> --approve` server-side under this machine's `gh` login (so `gh` must be installed + authenticated — no token/PAT needed). Every approve re-verifies the cookie (`POST /api/jobs/:id/approve` → 401 if locked). It's disabled for a PR you (that `gh` identity) authored, and becomes **✓ Approved** once done.
-
-Over the proxy you're on HTTPS, so the password is encrypted in transit; on plain `http://localhost` it never leaves your machine.
-
-## File layout
-
-| Path | Purpose |
-|---|---|
-| `bin/start.js` | Local preflight + bootstrap |
-| `bin/docker-server` | Docker dispatcher (start/stop/ssh/login/etc) |
-| `Dockerfile` / `docker-compose.yml` | Container definition |
-| `server.js` | Express app, SSE, queue wiring, `.env` loader |
-| `lib/queue.js` | Concurrency-capped worker pool with EventEmitter |
-| `lib/repo-lock.js` | Per-repo serialization for git prep (safe concurrency) |
-| `lib/review-job.js` | Per-job orchestrator |
-| `lib/git-ops.js` | `gh repo clone`, `git fetch`, `git worktree add/remove` |
-| `lib/github.js` | PR URL parser + `gh pr view` wrapper |
-| `lib/skill-resolver.js` | Finds the review skill to inline |
-| `lib/claude-runner.js` | Spawns `claude -p`, parses stream-json |
-| `public/` | UI (vanilla JS + EventSource) |
-| `~/.prsnooze/` (host) or `prsnooze-data` volume (docker) | Runtime state |
-
-## Troubleshooting
-
-- **`gh pr view failed`**: run `gh auth status` (or `bin/docker-server ssh` then `gh auth status`).
-- **`Base branch not found on origin`**: the PR's base branch was deleted, or the cached clone is stale. prsnooze fetches before every worktree, so it usually means the branch really is gone.
-- **Claude exits non-zero**: the worktree is preserved at `~/.prsnooze/worktrees/<jobId>` (or in the container at `/home/prsnooze/.prsnooze/worktrees/<jobId>`). `cd` in and run `claude` interactively to reproduce.
-- **Review feels generic**: prsnooze searches for a project-level review skill in the worktree's `.claude/skills/`, then at `~/.claude/skills/`, then falls back to the bundled `skills/default-review/SKILL.md`. The `skill_resolved` event shows which one was used. For a project-specific rubric, add a `review-pr/SKILL.md` to your project.
-
-## Roadmap
-
-- GitHub webhook (auto-trigger on PR open)
-- Optional bearer-token auth on the web UI
-- Persistent queue (survive restart)
-- Pluggable skill names via env
+- **`gh pr view failed`** — run `gh auth status`. This is the most common one.
+- **`PR is merged, not OPEN`** — it only reviews open PRs.
+- **Claude exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. `cd` in and run `claude` there to see what happened.
+- **The review feels generic** — it fell back to the bundled playbook. Add a `review-pr/SKILL.md` to your repo; the page tells you which one it used.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
