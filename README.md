@@ -130,6 +130,8 @@ prsnooze looks for a review playbook in this order and uses the first it finds:
 
 Open the finished review and press **Resume review**. It continues the *same* Claude session, so it already knows what it said the first time, and re-checks the current state: new commits, and replies to its own comments. Each earlier point comes back as **addressed**, **answered** (the author was right — it concedes), or **still open**.
 
+A resume can approve. Once nothing is left open, it re-scores the current head against the same table above and posts the verb that comes out, so a small PR whose findings the author fixed gets approved instead of sitting there forever. Fixing the findings doesn't buy down the score, though: a change that touches auth, a migration or CI/CD is still high-risk after the fixes land, so it comments again and the merge call stays with you.
+
 Before it runs, it checks whether that's worth doing and tells you: *"2 new commits and 3 replies to your comments since your review."* If there's nothing new, or the PR is already approved, it says so — **Force resume** runs it anyway. On a merged or closed PR, force is disabled: there's no PR left to review.
 
 ## Setup, properly
