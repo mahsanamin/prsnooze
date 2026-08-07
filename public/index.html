@@ -35,6 +35,21 @@
            screen it gets the whole stage. See placeComposer() in app.js. -->
       <div id="composer-top"></div>
       <div class="topbar-right">
+        <!-- What's left of the host's Claude plan. Everyone who can open this
+             page can spend that plan, so everyone can see the meter: the chip
+             carries the tightest window, and clicking it opens the full
+             breakdown with reset times. See renderUsage() in app.js. -->
+        <div class="usage" id="usage">
+          <button id="usage-chip" class="usagechip" type="button" aria-expanded="false" aria-controls="usage-pop" hidden>
+            <span class="usage-meter" aria-hidden="true"><i id="usage-fill" class="usage-fill"></i></span>
+            <span id="usage-chip-text" class="usage-chip-text">Claude usage</span>
+          </button>
+          <div id="usage-pop" class="usage-pop" role="dialog" aria-label="Claude plan usage" hidden>
+            <div class="usage-pop-h">Claude plan usage</div>
+            <div id="usage-rows" class="usage-rows"></div>
+            <div id="usage-foot" class="usage-foot"></div>
+          </div>
+        </div>
         <button id="lock-chip" class="lockchip" type="button" hidden></button>
         <!-- One control for "tell me when a review finishes": the chime AND the
              desktop notification. It replaced a volume toggle sitting next to a

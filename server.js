@@ -13,6 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
+const { getUsage } = require("./lib/claude-usage");
 const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
@@ -253,6 +254,23 @@ app.get("/api/config", (req, res) => {
     passwordConfigured: !!ADMIN_PASSWORD,
     unlocked: isUnlocked(req),
   });
+});
+
+// How much of the host's Claude plan is left. Open to everyone who can reach
+// the page on purpose: they're the ones spending it, so they should be able to
+// see what's left before they queue another review. The reading is cached in
+// lib/claude-usage.js, so a room full of open tabs still only spawns one CLI.
+app.get("/api/usage", async (_req, res) => {
+  const data = await getUsage({ claudeBin: CLAUDE_BIN });
+  res.set("Cache-Control", "no-store");
+  if (!data.ok && data.detail) {
+    // The host is the only one who can fix a broken reading, so the reason goes
+    // to their console — the page just says it doesn't know.
+    console.warn(`[usage] unavailable: ${data.detail}`);
+    const { detail, ...safe } = data;
+    return res.json(safe);
+  }
+  res.json(data);
 });
 
 // Prove knowledge of the admin password → set the privilege cookie.

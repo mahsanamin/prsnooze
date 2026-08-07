@@ -30,6 +30,12 @@ const emptyState = $("empty-state");
 const faviconEl = $("favicon");
 const toastEl = $("toast");
 const lockChip = $("lock-chip");
+const usageChip = $("usage-chip");
+const usageFill = $("usage-fill");
+const usageChipText = $("usage-chip-text");
+const usagePop = $("usage-pop");
+const usageRows = $("usage-rows");
+const usageFoot = $("usage-foot");
 const unlockBackdrop = $("unlock-backdrop");
 const unlockForm = $("unlock-modal");
 const unlockPass = $("unlock-pass");
@@ -921,6 +927,10 @@ function finish(rev, state) {
   if (rev.id === selectedId) { updateSubmitButton(); applyActivityState(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   updateStatusLight();
+  // A review just spent part of the plan — that's the moment the meter is worth
+  // re-reading. Slightly delayed: the CLI writes its final limit state as the
+  // process winds down.
+  if (first && !rev.replaying) setTimeout(refreshUsage, 3000);
   // No refreshList here: the server broadcasts a fresh job-list snapshot over
   // the WebSocket on this same state change, so the list updates without a poll.
 }
@@ -1047,6 +1057,118 @@ if (unlockEye) unlockEye.addEventListener("click", () => {
 });
 if (unlockBackdrop) unlockBackdrop.addEventListener("click", (e) => { if (e.target === unlockBackdrop) closeUnlock(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !unlockBackdrop.hidden) closeUnlock(); });
+
+// ------------------------------------------------------------- plan usage ---
+// prsnooze spends one person's Claude subscription, and anyone who can open this
+// page can spend it. So the meter is public: the chip carries whichever window
+// is closest to its limit — that's the one that will stop the next review — and
+// the popover breaks out every window with what's left and when it resets.
+let usageData = null;
+let usageFetchedAt = 0;
+// Slow on purpose. Only a finished review moves these numbers meaningfully, and
+// each reading costs ~5s of CLI boot on the host, so the interval is a floor;
+// the real refreshes are triggered by events below.
+const USAGE_POLL_MS = 180_000;
+
+async function refreshUsage() {
+  try {
+    const r = await fetch("/api/usage");
+    if (!r.ok) return;
+    usageData = await r.json();
+    usageFetchedAt = Date.now();
+    renderUsage();
+  } catch {}
+}
+
+// Left, not used, decides the colour: 80% used is only alarming because 20% is
+// what remains.
+function usageTone(leftPct) { return leftPct <= 10 ? "crit" : leftPct <= 25 ? "warn" : "ok"; }
+function fmtPct(n) { return String(Number(Number(n).toFixed(1))); }
+function fmtNum(n) { return Number(n).toLocaleString(); }
+// "Current session" is the 5-hour window, everything else is weekly.
+function usageWindowShort(w) { return w.id.startsWith("session") ? "session" : "week"; }
+function usageReasonText(reason) {
+  switch (reason) {
+    case "not-a-subscription": return "No plan limits to report — this host's claude CLI isn't on a subscription (API key, or not logged in).";
+    case "no-limits-reported": return "The claude CLI didn't report any limit windows.";
+    default: return "Couldn't read usage from the claude CLI on this host — see the prsnooze server log.";
+  }
+}
+
+function renderUsage() {
+  if (!usageChip) return;
+  const d = usageData;
+  if (!d || !d.ok || !Array.isArray(d.windows) || !d.windows.length) {
+    // Nothing worth telling teammates — but the host is the only one who can
+    // fix a broken reading, so they get a muted chip instead of silence.
+    usageChip.hidden = !isHost;
+    usagePop.hidden = true;
+    usageChip.setAttribute("aria-expanded", "false");
+    if (isHost) {
+      usageChip.className = "usagechip unknown";
+      usageFill.style.width = "0%";
+      usageChipText.textContent = "usage unknown";
+      usageChip.title = usageReasonText(d?.reason);
+    }
+    return;
+  }
+  const tight = d.windows.reduce((a, b) => (b.usedPct > a.usedPct ? b : a));
+  usageChip.hidden = false;
+  usageChip.className = `usagechip ${usageTone(tight.leftPct)}${d.stale ? " stale" : ""}`;
+  usageFill.style.width = `${Math.min(100, Math.max(0, tight.usedPct))}%`;
+  usageChipText.innerHTML =
+    `${fmtPct(tight.leftPct)}% left <span class="usage-chip-win">${escapeHtml(usageWindowShort(tight))}</span>`;
+  usageChip.title =
+    d.windows
+      .map((w) => `${w.label}: ${fmtPct(w.usedPct)}% used, ${fmtPct(w.leftPct)}% left${w.resets ? ` · resets ${w.resets}` : ""}`)
+      .join("\n") + "\n\nClick for details";
+  renderUsagePop(d, tight);
+}
+
+function renderUsagePop(d, tight) {
+  usageRows.innerHTML = d.windows
+    .map(
+      (w) => `<div class="usage-row ${usageTone(w.leftPct)}${w.id === tight.id ? " tight" : ""}">
+        <div class="usage-row-top">
+          <span class="usage-row-label">${escapeHtml(w.label)}</span>
+          <span class="usage-row-num"><b>${fmtPct(w.leftPct)}% left</b> · ${fmtPct(w.usedPct)}% used</span>
+        </div>
+        <span class="usage-bar"><i style="width:${Math.min(100, Math.max(0, w.usedPct))}%"></i></span>
+        ${w.resets ? `<div class="usage-row-reset">resets ${escapeHtml(w.resetsShort || w.resets)}${w.zone ? ` <span class="usage-zone">${escapeHtml(w.zone)}</span>` : ""}</div>` : ""}
+      </div>`,
+    )
+    .join("");
+  const a = d.activity || {};
+  const seen = [];
+  if (a["24h"]) seen.push(`${fmtNum(a["24h"].requests)} requests in 24h`);
+  if (a["7d"]) seen.push(`${fmtNum(a["7d"].requests)} in 7d`);
+  const who = hostLogin ? `@${hostLogin}` : hostName || "the host";
+  usageFoot.innerHTML =
+    (seen.length ? `<div>${escapeHtml(seen.join(" · "))}</div>` : "") +
+    `<div>${escapeHtml(who)}'s plan${d.stale ? " · last known reading" : ""}${d.fetchedAt ? ` · read ${escapeHtml(relTime(d.fetchedAt))}` : ""}</div>` +
+    `<div class="usage-note">Reviews fail until the window with the least left resets. Counted from sessions on the host machine.</div>`;
+}
+
+function closeUsagePop() {
+  if (!usagePop || usagePop.hidden) return;
+  usagePop.hidden = true;
+  usageChip.setAttribute("aria-expanded", "false");
+}
+if (usageChip) {
+  usageChip.addEventListener("click", () => {
+    // Nothing to break out when there's no reading — the chip's own tooltip
+    // carries the reason, so don't open an empty panel over it. Re-ask instead,
+    // in case whatever was wrong on the host has since been fixed.
+    if (!usageData?.ok) { refreshUsage(); return; }
+    const opening = usagePop.hidden;
+    usagePop.hidden = !opening;
+    usageChip.setAttribute("aria-expanded", String(opening));
+    // Opening it is someone asking "how much is left, right now".
+    if (opening) refreshUsage();
+  });
+}
+document.addEventListener("click", (e) => { if (!e.target.closest("#usage")) closeUsagePop(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeUsagePop(); });
 
 async function verifyReview(id, force = false) {
   const rev = reviews.get(id);
@@ -1439,13 +1561,21 @@ async function loadConfig() {
       if (heroHost) heroHost.textContent = cfg.hostLogin ? ` as @${cfg.hostLogin}` : ` as ${hostName}`;
     }
     updateLockChip();
+    // The usage chip names the host and has a host-only fallback state, so it
+    // can only render properly once the config has landed.
+    renderUsage();
     if (unlocked) setUnlocked(true); // (re)arm the client-side relock timer
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
     updateStatusLight();
   } catch {}
 }
 function stampLastSeen() { localStorage.setItem(LS_LASTSEEN, String(Date.now())); }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") stampLastSeen(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") stampLastSeen();
+  // Coming back to a tab that sat idle: the meter on screen is as old as the tab
+  // has been away, so re-read it rather than waiting out the interval.
+  else if (Date.now() - usageFetchedAt > USAGE_POLL_MS) refreshUsage();
+});
 window.addEventListener("beforeunload", stampLastSeen);
 
 // ------------------------------------------------------------------- init ---
@@ -1455,5 +1585,9 @@ updateStatusLight();
 loadConfig();
 refreshList();   // instant first paint (one-shot fetch, not a poll)
 connectLive();   // recurring updates via WebSocket — replaces the 5s poll
+refreshUsage();  // what's left of the host's Claude plan
 // Keep relative timestamps ("2m ago") ticking. Local re-render only — no network.
 setInterval(() => renderLists(), 60000);
+// A floor under the plan meter. Reviews finishing and opening the popover are
+// what actually keep it current; this only catches a tab left open all day.
+setInterval(() => { if (document.visibilityState === "visible") refreshUsage(); }, USAGE_POLL_MS);
