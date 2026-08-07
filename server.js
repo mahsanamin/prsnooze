@@ -13,6 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
+const { getUsage } = require("./lib/claude-usage");
 const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
@@ -254,6 +255,44 @@ app.get("/api/config", (req, res) => {
     passwordConfigured: !!ADMIN_PASSWORD,
     unlocked: isUnlocked(req),
   });
+});
+
+// What prsnooze itself has spent this calendar month. Claude's plan meters in
+// 5-hour and weekly windows — there is no monthly limit to report — so this
+// isn't a limit, it's a total: how much of the host's plan went on reviewing
+// other people's PRs since the 1st. Read from the job history already on disk,
+// so it costs nothing and stays live even when the CLI reading is stale.
+function monthToDateUsage(now = new Date()) {
+  const since = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  let reviews = 0;
+  let costUsd = 0;
+  for (const j of jobs.values()) {
+    const at = j.finishedAt || j.createdAt || 0;
+    if (at < since || (j.state !== "done" && j.state !== "failed")) continue;
+    reviews += 1;
+    // Subscription runs still report what the same work would have cost on the
+    // API — the only spend figure there is, so it's labelled as such in the UI.
+    costUsd += Number(j.summary?.totalCostUsd) || 0;
+  }
+  return { since, reviews, costUsd: Math.round(costUsd * 100) / 100 };
+}
+
+// How much of the host's Claude plan is left. Open to everyone who can reach
+// the page on purpose: they're the ones spending it, so they should be able to
+// see what's left before they queue another review. The CLI reading is cached in
+// lib/claude-usage.js, so a room full of open tabs still only spawns one CLI;
+// the month-to-date total is cheap and always computed fresh.
+app.get("/api/usage", async (_req, res) => {
+  const data = await getUsage({ claudeBin: CLAUDE_BIN });
+  res.set("Cache-Control", "no-store");
+  if (!data.ok && data.detail) {
+    // The host is the only one who can fix a broken reading, so the reason goes
+    // to their console — the page just says it doesn't know.
+    console.warn(`[usage] unavailable: ${data.detail}`);
+    const { detail, ...safe } = data;
+    return res.json({ ...safe, month: monthToDateUsage() });
+  }
+  res.json({ ...data, month: monthToDateUsage() });
 });
 
 // Prove knowledge of the admin password → set the privilege cookie.

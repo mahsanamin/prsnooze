@@ -65,6 +65,16 @@ So:
 2. **Use a fine-grained GitHub token** scoped to the repos you actually want reviewed (Pull requests: read+write, Contents: read). Not a classic all-repos token.
 3. Run it on a machine you don't mind seeing network activity from.
 
+## Everyone can see what's left of your plan
+
+Reviews come out of one person's Claude subscription, so the top bar shows how much of it is still there — **82% left · session** — coloured green, amber or red. Click it for every limit window, what's used, what's left, and when each one resets.
+
+It's deliberately visible to everyone, not just the host: whoever is about to paste a PR link is the person spending the plan, and "the session limit resets at 9pm" is a much better answer than a review that mysteriously fails. The numbers come from the CLI's own `/usage` report, which costs nothing to ask for — no tokens, no API call.
+
+The same panel ends with a month-to-date total — *6 reviews · ≈$11.49 at API rates* — read from prsnooze's own review history. That one is a total, not a limit: Claude's plan resets by session and by week, so there's no monthly tank to run dry. It's there to answer "how much has this thing actually eaten of my plan this month".
+
+If the host's `claude` runs on an API key instead of a subscription there are no plan windows to report, and the meter simply doesn't appear.
+
 ## What it does, step by step
 
 ```mermaid
@@ -183,6 +193,7 @@ Set `PRSNOOZE_ADMIN_PASSWORD` to switch it on (leave it unset and approving is d
 - **`gh pr view failed`** — run `gh auth status`. This is the most common one.
 - **`PR is merged, not OPEN`** — it only reviews open PRs.
 - **Claude exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. `cd` in and run `claude` there to see what happened.
+- **Every review suddenly fails** — check the usage chip in the top bar first. A spent plan limit looks exactly like a broken tool.
 - **The review feels generic** — it fell back to the bundled playbook. Add a `review-pr/SKILL.md` to your repo; the page tells you which one it used.
 
 ## License
