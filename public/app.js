@@ -35,6 +35,7 @@ const usageFill = $("usage-fill");
 const usageChipText = $("usage-chip-text");
 const usagePop = $("usage-pop");
 const usageRows = $("usage-rows");
+const usageMonth = $("usage-month");
 const usageFoot = $("usage-foot");
 const unlockBackdrop = $("unlock-backdrop");
 const unlockForm = $("unlock-modal");
@@ -1073,11 +1074,15 @@ const USAGE_POLL_MS = 180_000;
 async function refreshUsage() {
   try {
     const r = await fetch("/api/usage");
-    if (!r.ok) return;
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     usageData = await r.json();
-    usageFetchedAt = Date.now();
-    renderUsage();
-  } catch {}
+  } catch {
+    // A failed poll must not wipe a good number off the screen — only the very
+    // first one has nothing better to fall back to.
+    if (!usageData) usageData = { ok: false, reason: "unavailable" };
+  }
+  usageFetchedAt = Date.now();
+  renderUsage();
 }
 
 // Left, not used, decides the colour: 80% used is only alarming because 20% is
@@ -1098,7 +1103,19 @@ function usageReasonText(reason) {
 function renderUsage() {
   if (!usageChip) return;
   const d = usageData;
-  if (!d || !d.ok || !Array.isArray(d.windows) || !d.windows.length) {
+  // Nothing has come back yet. The host's CLI takes a few seconds to boot, and
+  // "unknown" during those seconds reads as a failure — so say we're looking.
+  if (!d) {
+    usageChip.hidden = false;
+    usageChip.className = "usagechip loading";
+    usageChip.title = "Reading how much of the host's Claude plan is left…";
+    usageFill.style.width = "";
+    usageChipText.textContent = "reading usage…";
+    usagePop.hidden = true;
+    usageChip.setAttribute("aria-expanded", "false");
+    return;
+  }
+  if (!d.ok || !Array.isArray(d.windows) || !d.windows.length) {
     // Nothing worth telling teammates — but the host is the only one who can
     // fix a broken reading, so they get a muted chip instead of silence.
     usageChip.hidden = !isHost;
@@ -1138,6 +1155,7 @@ function renderUsagePop(d, tight) {
       </div>`,
     )
     .join("");
+  renderUsageMonth(d.month);
   const a = d.activity || {};
   const seen = [];
   if (a["24h"]) seen.push(`${fmtNum(a["24h"].requests)} requests in 24h`);
@@ -1147,6 +1165,22 @@ function renderUsagePop(d, tight) {
     (seen.length ? `<div>${escapeHtml(seen.join(" · "))}</div>` : "") +
     `<div>${escapeHtml(who)}'s plan${d.stale ? " · last known reading" : ""}${d.fetchedAt ? ` · read ${escapeHtml(relTime(d.fetchedAt))}` : ""}</div>` +
     `<div class="usage-note">Reviews fail until the window with the least left resets. Counted from sessions on the host machine.</div>`;
+}
+
+// Month-to-date, which is a total rather than a limit: Claude's plan resets by
+// session and by week, so there is no monthly tank to be 40% into. What people
+// actually want to know is how much of the host's plan this page has eaten.
+function renderUsageMonth(m) {
+  if (!usageMonth) return;
+  if (!m || typeof m.reviews !== "number") { usageMonth.hidden = true; return; }
+  const month = new Date(m.since).toLocaleString(undefined, { month: "long" });
+  const bits = [`${fmtNum(m.reviews)} review${m.reviews === 1 ? "" : "s"}`];
+  if (m.costUsd > 0) bits.push(`≈$${m.costUsd.toFixed(2)} at API rates`);
+  usageMonth.hidden = false;
+  usageMonth.innerHTML =
+    `<div class="usage-month-h">${escapeHtml(month)} so far</div>` +
+    `<div class="usage-month-v">${escapeHtml(bits.join(" · "))}</div>` +
+    `<div class="usage-month-n">Run through prsnooze since the 1st. The limits above are what actually run out — this is just the running total.</div>`;
 }
 
 function closeUsagePop() {

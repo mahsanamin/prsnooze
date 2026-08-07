@@ -175,6 +175,13 @@ test("GET /api/usage serves the reading to anyone who can open the page", async 
   assert.equal(u.windows[0].leftPct, 34);
   assert.deepEqual(u.activity["24h"], { requests: 12, sessions: 3 });
   assert.ok(u.fetchedAt > 0);
+  // Month-to-date rides along: no jobs in this throwaway home, so it's a
+  // genuine zero rather than a missing field the page would have to guess at.
+  const firstOfMonth = new Date();
+  assert.equal(u.month.reviews, 0);
+  assert.equal(u.month.costUsd, 0);
+  assert.equal(new Date(u.month.since).getMonth(), firstOfMonth.getMonth());
+  assert.equal(new Date(u.month.since).getDate(), 1);
 });
 
 test("a failed reading never ships the CLI's error text to the browser", async () => {
@@ -187,4 +194,7 @@ test("a failed reading never ships the CLI's error text to the browser", async (
   assert.equal(u.ok, false);
   assert.equal(u.reason, "unavailable");
   assert.equal("detail" in u, false);
+  // Month-to-date comes from prsnooze's own history, so it survives a CLI that
+  // can't answer.
+  assert.equal(u.month.reviews, 0);
 });

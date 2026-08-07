@@ -205,9 +205,18 @@ body::after {
 .usagechip.ok { color: var(--green); border-color: rgba(82, 223, 160, 0.32); background: rgba(82, 223, 160, 0.09); }
 .usagechip.warn { color: var(--yellow); border-color: rgba(245, 198, 94, 0.38); background: rgba(245, 198, 94, 0.1); }
 .usagechip.crit { color: var(--red); border-color: rgba(255, 107, 129, 0.42); background: rgba(255, 107, 129, 0.12); }
-.usagechip.unknown, .usagechip.stale { color: var(--faint); }
+.usagechip.unknown, .usagechip.stale, .usagechip.loading { color: var(--faint); }
 /* A stale reading still shows its last known number, just visibly unsure. */
 .usagechip.stale { border-style: dashed; }
+/* The first reading takes a few seconds of CLI boot on the host. A bar sweeping
+   the gauge says "looking" — sitting at "unknown" for those seconds read as a
+   failure that had already happened. */
+.usagechip.loading { cursor: default; }
+.usagechip.loading .usage-fill { width: 45%; animation: usage-sweep 1.15s ease-in-out infinite; }
+@keyframes usage-sweep {
+  0%, 100% { transform: translateX(-100%); }
+  50% { transform: translateX(122%); }
+}
 
 .usage-pop {
   position: absolute; top: calc(100% + 10px); right: 0; z-index: 50;
@@ -235,7 +244,15 @@ body::after {
 .usage-row.crit .usage-bar i { background: var(--red); }
 .usage-row-reset { font-size: 11.5px; color: var(--faint); }
 .usage-zone { opacity: 0.65; }
-.usage-foot { margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--faint); line-height: 1.55; }
+/* Month-to-date sits apart from the windows above it on purpose: it's a total,
+   not a limit, and styling it like the meters would imply a monthly tank that
+   Claude's plan doesn't have. */
+.usage-month { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.usage-month[hidden] { display: none; }
+.usage-month-h { font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--faint); }
+.usage-month-v { margin-top: 3px; font-size: 13px; font-weight: 600; color: var(--text); }
+.usage-month-n { margin-top: 4px; font-size: 11.5px; color: var(--faint); line-height: 1.5; opacity: 0.85; }
+.usage-foot { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--faint); line-height: 1.55; }
 .usage-note { margin-top: 6px; opacity: 0.8; }
 
 /* ----------------------------------------------------------- composer ---- */
@@ -389,7 +406,8 @@ body::after {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-stage .addr, .zzz i, .eyes-svg .eye, .srow-bar > i, .srow.running .srow-ico, .pipe-bar > i { animation: none !important; }
+  .hero-stage .addr, .zzz i, .eyes-svg .eye, .srow-bar > i, .srow.running .srow-ico, .pipe-bar > i,
+  .usagechip.loading .usage-fill { animation: none !important; }
 }
 
 /* privilege lock chip + unlock prompt */
