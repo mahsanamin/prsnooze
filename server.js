@@ -98,7 +98,8 @@ function pushEvent(jobId, event) {
   if (event.kind === "skipped") {
     job.skipped = true;
     job.skipReason = event.reason;
-    job.outcome = event.outcome || null;
+    job.skipMessage = event.message || "";
+    job.outcome = event.outcome || "skipped";
   }
   for (const res of subscribers.get(jobId) || []) {
     sendSse(res, event);
@@ -366,6 +367,7 @@ function jobListItem(j) {
     outcome: j.outcome || null, // "approved" | "commented" | "changes_requested" | null
     skipped: !!j.skipped,
     skipReason: j.skipReason || null,
+    skipMessage: j.skipMessage || null,
     title: j.prMeta?.title,
     number: j.prMeta?.number,
     nameWithOwner: j.prMeta?.nameWithOwner,

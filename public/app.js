@@ -207,7 +207,8 @@ function upsertReview(data) {
   if (!rev) {
     rev = {
       id: data.id, prUrl: data.prUrl, prMeta: null, state: data.state || "queued",
-      phase: null, outcome: data.outcome || null, skipped: !!data.skipped, skipReason: data.skipReason || null,
+      phase: null, outcome: data.outcome || null, skipped: !!data.skipped,
+      skipReason: data.skipReason || null, skipMessage: data.skipMessage || null,
       finished: false, freshFinish: false, notified: false, finishedAt: data.finishedAt || null,
       createdAt: data.createdAt || null, stats: null,
       summaryText: "", errorText: "", es: null, panelLoaded: false, els: null, _systemShown: false,
@@ -220,6 +221,8 @@ function upsertReview(data) {
   if (data.finishedAt) rev.finishedAt = data.finishedAt;
   if (data.createdAt) rev.createdAt = data.createdAt;
   if (data.skipReason) rev.skipReason = data.skipReason;
+  if (data.skipMessage) rev.skipMessage = data.skipMessage;
+  if (data.skipped) rev.skipped = true;
   if (data.prMeta && !rev.prMeta) rev.prMeta = data.prMeta;
   else if (data.nameWithOwner && !rev.prMeta) rev.prMeta = { nameWithOwner: data.nameWithOwner, number: data.number, title: data.title };
   return rev;
@@ -696,14 +699,19 @@ function renderStepper(rev) {
   // breadcrumb — the stages it went through are worth keeping, just not worth a
   // progress bar that is permanently full.
   el.hidden = false;
-  const done = rev.state === "done";
+  // A skip finishes as "done" but stopped early on purpose, so it gets neither
+  // a full green pipeline nor the red "stop" of a failure: the stages it never
+  // reached stay unreached, just not as an alarm.
+  const skipped = !!rev.skipped;
+  const done = rev.state === "done" && !skipped;
   const idx = done ? PHASES.length : phaseIndex(rev.phase);
   const live = isActive(rev.state);
   const pct = idx < 0 ? 4 : Math.round(((idx + (live ? 0.5 : 1)) / PHASES.length) * 100);
 
   const pipe = document.createElement("div");
-  pipe.className = "pipe" + (done ? " pipe-done" : "");
+  pipe.className = "pipe" + (done ? " pipe-done" : skipped ? " pipe-done pipe-skipped" : "");
   if (done) pipe.appendChild(iconEl("check"));
+  else if (skipped) pipe.appendChild(iconEl("skip"));
   PHASES.forEach((ph, i) => {
     if (i) {
       const sep = document.createElement("span");
@@ -717,7 +725,7 @@ function renderStepper(rev) {
     pipe.appendChild(st);
   });
 
-  if (done) { el.replaceChildren(pipe); return; }
+  if (done || skipped) { el.replaceChildren(pipe); return; }
 
   const bar = document.createElement("div");
   bar.className = "pipe-bar" + (live ? " live" : " stopped");
@@ -754,7 +762,7 @@ function renderSummary(rev) {
           ? "No post detected — GitHub couldn't be checked, so something may have been posted."
           : "No comment posted — every concern was already covered by the existing reviews.");
         break;
-      case "skipped": lead = svgIcon("skip") + escapeHtml(rev.skipReason || "Skipped."); break;
+      case "skipped": lead = svgIcon("skip") + escapeHtml(skipText(rev)); break;
       default: lead = svgIcon("check") + "Finished.";
     }
     // What the review actually said. This used to be hidden behind a Detailed
@@ -879,7 +887,7 @@ function handleEvent(rev, ev) {
       rev.stats = { durationMs: ev.durationMs, numTurns: ev.numTurns, totalCostUsd: ev.totalCostUsd };
       renderStats(rev); renderSummary(rev);
       break;
-    case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipReason = ev.reason; finish(rev, "done"); break;
+    case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipped = true; rev.skipReason = ev.reason; rev.skipMessage = ev.message || ""; finish(rev, "done"); break;
     case "failed": rev.errorText = ev.error || ""; finish(rev, "failed"); break;
     case "done": finish(rev, "done"); break;
     case "interrupted": setState(rev, "interrupted"); break;
@@ -1156,7 +1164,7 @@ function entrySpec(ev) {
     case "approval_policy": { const v = ev.autoApprove ? "eligible" : "disabled"; const mt = Array.isArray(ev.matchedTests) && ev.matchedTests.length > 0 ? ` <span class="tag">matched tests: ${ev.matchedTests.length}</span>` : ""; return { cat: "pr", icon: "🛂", label: "approval", body: `<strong>${escapeHtml(v)}</strong> <span class="dim">${escapeHtml(ev.reason || "")}</span>${mt}` }; }
     case "rubric": { const tier = ev.score <= 20 ? "approve" : ev.score > 60 ? "high-risk" : "comment"; const hits = Array.isArray(ev.hits) && ev.hits.length ? ` hits=[${ev.hits.map(escapeHtml).join(",")}]` : ""; const reds = Array.isArray(ev.reducers) && ev.reducers.length ? ` reducers=[${ev.reducers.map(escapeHtml).join(",")}]` : ""; return { cat: "pr", icon: "📊", label: "rubric", body: `<strong>${escapeHtml(tier)}</strong> <span class="dim">score=${ev.score}${hits}${reds}</span>` }; }
     case "outcome_detected": return { cat: "ok", icon: "🏁", label: "outcome", body: `<strong>${escapeHtml(outcomeLabel(ev.outcome))}</strong>` };
-    case "skipped": return { cat: "warn", icon: "↪", label: "skipped", body: `<strong>${escapeHtml(ev.reason || "")}</strong> <span class="dim">${escapeHtml(ev.detail || "")}</span>` };
+    case "skipped": return { cat: "warn", icon: "↪", label: "skipped", body: `<strong>${escapeHtml(ev.message || skipReasonText(ev.reason))}</strong>${ev.detail ? ` <span class="dim">${escapeHtml(ev.detail)}</span>` : ""}` };
     case "system": return { cat: "sys", icon: "•", label: "session", body: `<span class="dim">${(ev.sessionId || "").slice(0, 8)}${ev.model ? " · " + escapeHtml(ev.model) : ""}</span>` };
     case "assistant_text": return { cat: "think", icon: "💭", label: "", body: escapeHtml(ev.text || "") };
     case "tool_use": { const tool = ev.tool || "tool"; const cmd = ev.summary || ""; const title = friendlyTitle(tool, cmd); let body = title ? `<span class="ev-title">${escapeHtml(title)}</span> <span class="arg">${escapeHtml(cmd)}</span>` : `<strong>${escapeHtml(tool)}</strong> <span class="arg">${escapeHtml(cmd)}</span>`; if (ev.full) body += " " + details("input", JSON.stringify(ev.full, null, 2)); return { cat: "tool", icon: TOOL_ICONS[tool] || "🔧", label: "", body }; }
@@ -1403,6 +1411,19 @@ function maybeShowWelcome(jobs) {
 welcomeDismiss.addEventListener("click", () => { welcomeBanner.hidden = true; });
 
 // ----------------------------------------------------------- shared bits ----
+// A skip is a normal ending, so it needs a sentence a human wrote, not the
+// machine slug the event carries for logic. `message` is the server's wording;
+// these are the fallbacks for older events that only have a reason.
+function skipReasonText(reason) {
+  switch (reason) {
+    case "pr_not_open": return "Nothing to review: the PR is no longer open.";
+    case "already_reviewed_by_self": return "Already reviewed this exact commit, so nothing to redo.";
+    default: return "Skipped.";
+  }
+}
+function skipText(rev) {
+  return rev.skipMessage || skipReasonText(rev.skipReason);
+}
 function outcomeLabel(o) {
   switch (o) {
     case "approved": return "✓ approved";
