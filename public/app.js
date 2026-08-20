@@ -30,6 +30,7 @@ const emptyState = $("empty-state");
 const faviconEl = $("favicon");
 const toastEl = $("toast");
 const lockChip = $("lock-chip");
+const modelChip = $("model-chip");
 const usageChip = $("usage-chip");
 const usageFill = $("usage-fill");
 const usageChipText = $("usage-chip-text");
@@ -109,6 +110,7 @@ const ICON_PATHS = {
   turns: '<path d="M4 8h11a4 4 0 0 1 0 8H8"/><path d="m10.5 13-2.5 3 2.5 3"/>',
   coin: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8a2.6 2.6 0 0 0-2.5-1.3c-1.5 0-2.6.8-2.6 2s1 1.7 2.6 2 2.6.8 2.6 2-1.1 2-2.6 2a2.7 2.7 0 0 1-2.5-1.3"/>',
   files: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5z"/><path d="M13.8 3.6V8h4.6"/>',
+  chip: '<rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 4v3.5M14 4v3.5M10 16.5V20M14 16.5V20M4 10h3.5M4 14h3.5M16.5 10H20M16.5 14H20"/>',
 };
 function svgIcon(name, cls = "") {
   return `<svg class="ico${cls ? " " + cls : ""}" viewBox="0 0 24 24" width="16" height="16" fill="none"` +
@@ -503,6 +505,12 @@ function ensurePanel(rev) {
 // it targets, and what the Claude session cost in time and turns. This is what
 // a finished review has to say beyond its one-line verdict — without it the
 // panel is a headline over an empty page.
+// "claude-opus-4-5-20251101" → "opus-4-5". The vendor prefix and the release
+// date are noise in a tile this narrow; the full id stays in the tooltip.
+function prettyModelId(id) {
+  return String(id).replace(/^claude-/, "").replace(/-\d{8}$/, "");
+}
+
 function renderStats(rev) {
   const el = rev.els?.stats;
   if (!el) return;
@@ -529,6 +537,12 @@ function renderStats(rev) {
   if (m.headRefName || m.baseRefName) {
     tiles.push({ icon: "branch", label: "branch", value: m.headRefName || "?", sub: m.baseRefName ? `→ ${m.baseRefName}` : "", mono: true });
   }
+  if (rev.model) {
+    // Which model read this diff. Worth a tile of its own: a review's depth
+    // depends on it, and it's the honest answer months later when the host's
+    // default has moved on.
+    tiles.push({ icon: "chip", label: "model", value: prettyModelId(rev.model), sub: "", mono: true, title: rev.model });
+  }
   const ms = s.durationMs || (rev.finishedAt && rev.createdAt ? rev.finishedAt - rev.createdAt : 0);
   if (ms > 0) tiles.push({ icon: "timer", label: "took", value: humanMs(ms), sub: "" });
   if (Number.isFinite(s.numTurns)) tiles.push({ icon: "turns", label: "turns", value: String(s.numTurns), sub: "" });
@@ -549,7 +563,7 @@ function renderStats(rev) {
     const val = document.createElement("div");
     val.className = "stat-v" + (t.mono ? " mono" : "");
     val.textContent = t.value;
-    val.title = t.value;
+    val.title = t.title || t.value;
     tile.append(head, val);
     if (t.sub) {
       const sub = document.createElement("div");
@@ -844,6 +858,7 @@ async function loadFinishedLog(rev) {
     if (job.createdAt) rev.createdAt = job.createdAt;
     if (job.finishedAt) rev.finishedAt = job.finishedAt;
     rev.sessionId = job.sessionId || job.summary?.sessionId || rev.sessionId;
+    rev.model = job.model || rev.model;
     for (const ev of job.events || []) { if (ev.kind === "phase") rev.phase = ev.phase; appendLog(rev, ev); }
     rev.els.count.textContent = `${rev.els.log.children.length} events`;
     renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev); renderLists();
@@ -877,6 +892,10 @@ function handleEvent(rev, ev) {
   if (rev.els?.count) rev.els.count.textContent = `${rev.els.log.children.length} events`;
   switch (ev.kind) {
     case "phase": rev.phase = ev.phase; setState(rev, "running"); break;
+    // The CLI names the model it booted with on its init event. Kept per review,
+    // not read off the topbar chip: an old review keeps the model that actually
+    // read its diff even after the host changes their default.
+    case "system": if (ev.model && ev.model !== rev.model) { rev.model = ev.model; renderStats(rev); } break;
     case "started": setState(rev, "running"); break;
     case "queued": setState(rev, "queued"); break;
     case "pr_meta": rev.prMeta = ev; renderHead(rev); renderStats(rev); renderLists(); break;
@@ -1066,6 +1085,54 @@ if (unlockEye) unlockEye.addEventListener("click", () => {
 });
 if (unlockBackdrop) unlockBackdrop.addEventListener("click", (e) => { if (e.target === unlockBackdrop) closeUnlock(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !unlockBackdrop.hidden) closeUnlock(); });
+
+// ----------------------------------------------------------- active model ---
+// Every review runs on whatever the host's claude CLI defaults to — prsnooze
+// never passes --model. That default decides how sharp the reviews come back,
+// so it belongs on screen next to the plan meter instead of only in the host's
+// terminal. It changes when someone edits their CLI settings, not once a
+// review, so the reading is cheap to hold on to (see lib/claude-model.js).
+let modelData = null;
+
+async function refreshModel() {
+  try {
+    const r = await fetch("/api/model");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    modelData = await r.json();
+  } catch {
+    // A failed poll must not wipe a known name off the screen — only the very
+    // first one has nothing better to fall back to.
+    if (!modelData) modelData = { ok: false, reason: "unavailable" };
+  }
+  renderModel();
+}
+
+// "Opus 5 (1M context)" → the name, and the variant the chip dims. Split so the
+// model's identity stays readable when the topbar is tight.
+function splitModelName(name) {
+  const m = String(name).match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  return m ? { main: m[1], note: m[2] } : { main: String(name), note: "" };
+}
+
+function renderModel() {
+  if (!modelChip) return;
+  const d = modelData;
+  // No reading yet, or none to be had: show nothing rather than a guess or a
+  // placeholder. "which model" has no useful half-answer, and the host finds
+  // the reason for a failed reading in the server log.
+  if (!d || !d.ok || !d.name) { modelChip.hidden = true; return; }
+  const { main, note } = splitModelName(d.name);
+  modelChip.hidden = false;
+  modelChip.className = "modelchip" + (d.stale ? " stale" : "");
+  modelChip.innerHTML =
+    svgIcon("chip") +
+    `<span>${escapeHtml(main)}</span>` +
+    (note ? `<span class="model-note">${escapeHtml(note)}</span>` : "");
+  modelChip.title =
+    `Reviews on this host run on ${d.name}${d.isDefault ? ", the claude CLI's default" : ""}. ` +
+    (d.stale ? "Couldn't re-read it just now, so this is the last known setting. " : "") +
+    "Change it with /model on the host machine — not from this page.";
+}
 
 // ------------------------------------------------------------- plan usage ---
 // prsnooze spends one person's Claude subscription, and anyone who can open this
@@ -1641,8 +1708,16 @@ loadConfig();
 refreshList();   // instant first paint (one-shot fetch, not a poll)
 connectLive();   // recurring updates via WebSocket — replaces the 5s poll
 refreshUsage();  // what's left of the host's Claude plan
+refreshModel();  // which model that plan is being spent on
 // Keep relative timestamps ("2m ago") ticking. Local re-render only — no network.
 setInterval(() => renderLists(), 60000);
 // A floor under the plan meter. Reviews finishing and opening the popover are
 // what actually keep it current; this only catches a tab left open all day.
-setInterval(() => { if (document.visibilityState === "visible") refreshUsage(); }, USAGE_POLL_MS);
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  refreshUsage();
+  // Rides along with the meter. The server holds a model reading far longer
+  // than the usage one, so most of these are answered from its cache and only
+  // occasionally cost a CLI boot — enough to notice the host switching models.
+  refreshModel();
+}, USAGE_POLL_MS);

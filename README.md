@@ -75,6 +75,12 @@ The same panel ends with a month-to-date total — *6 reviews · ≈$11.49 at AP
 
 If the host's `claude` runs on an API key instead of a subscription there are no plan windows to report, and the meter simply doesn't appear.
 
+## The model doing the reviewing is on screen
+
+prsnooze never picks a model: every review runs on whatever the host's `claude` CLI is set to. So the top bar says which one — **Opus 5 · 1M context** — read from the CLI's own `/model` output, which costs nothing to ask for and is the live setting rather than a config value someone wrote down once.
+
+It's there because it's the shortest explanation of how a review reads: the same PR comes back very differently on Haiku than on Opus. Each finished review also keeps the model it actually ran on in its stats, so a review from last month still tells you what read that diff after the host has moved on to something else. Changing it is a host-side thing — `/model` in their CLI, not a control on this page.
+
 ## What it does, step by step
 
 ```mermaid

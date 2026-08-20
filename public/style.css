@@ -171,6 +171,27 @@ body::after {
 .queue-status { font-size: 12px; color: var(--faint); }
 .queue-status { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: rgba(8, 9, 13, 0.5); }
 
+/* --------------------------------------------------------- active model ---- */
+/* Which model the reviews run on. Sits next to the plan meter because they
+   answer neighbouring questions — what's being spent, and what it's buying —
+   but it's a label, not a control: nothing here can change the host's CLI. */
+.modelchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 11px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: rgba(8, 9, 13, 0.5); color: var(--muted);
+  font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap;
+}
+.modelchip[hidden] { display: none; }
+.modelchip .ico { color: var(--faint); }
+/* The variant in the parenthesis ("1M context") is detail, not identity: it
+   stays legible but never competes with the model name. */
+.model-note { color: var(--faint); font-weight: 600; }
+.model-note::before { content: "· "; }
+/* A name we can no longer confirm still beats no name at all — say it quietly. */
+.modelchip.stale { border-style: dashed; color: var(--faint); }
+.modelchip.unknown { color: var(--faint); }
+
 /* ---------------------------------------------------------- plan usage ---- */
 /* What's left of the host's Claude plan, sitting in the topbar because anyone
    who can reach this page can spend it. The chip is a fuel gauge: a bar that
@@ -816,6 +837,8 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
   .composer { flex-wrap: wrap; }
   .hero-stage .composer { flex-wrap: nowrap; }
   .brand-host { display: none; }   /* the machine name is the first thing to go */
+  /* The model keeps its name; the variant in brackets is the first detail to go. */
+  .model-note { display: none; }
 
   /* The rail becomes a drawer. A 320px column plus a review panel doesn't fit a
      phone, and the panel is what you came for — so the rail slides over it on

@@ -35,6 +35,12 @@
            screen it gets the whole stage. See placeComposer() in app.js. -->
       <div id="composer-top"></div>
       <div class="topbar-right">
+        <!-- Which model the reviews actually run on. prsnooze never passes
+             --model, so this is the host's claude CLI default — and the answer
+             to "why does this review read like that?". Read-only: changing it
+             means changing the host's CLI, not clicking here.
+             See renderModel() in app.js. -->
+        <span id="model-chip" class="modelchip" hidden></span>
         <!-- What's left of the host's Claude plan. Everyone who can open this
              page can spend that plan, so everyone can see the meter: the chip
              carries the tightest window, and clicking it opens the full
