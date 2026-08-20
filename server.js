@@ -14,6 +14,7 @@ const { v4: uuidv4 } = require("uuid");
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
 const { getUsage } = require("./lib/claude-usage");
+const { getModel } = require("./lib/claude-model");
 const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
@@ -92,6 +93,10 @@ function pushEvent(jobId, event) {
   if (event.kind === "pr_meta") job.prMeta = event;
   if (event.kind === "worktree_ready") job.worktreePath = event.path;
   if (event.kind === "claude_started") job.claudePid = event.pid || null;
+  // The CLI announces the model it booted with on its init event. Recorded on
+  // the job so a review keeps the model that actually read the diff, even after
+  // the host changes their default.
+  if (event.kind === "system" && event.model) job.model = event.model;
   if (event.kind === "summary" && event.sessionId) job.sessionId = event.sessionId;
   if (event.kind === "summary") job.summary = event;
   if (event.kind === "failed") job.error = event.error;
@@ -293,6 +298,24 @@ app.get("/api/usage", async (_req, res) => {
     return res.json({ ...safe, month: monthToDateUsage() });
   }
   res.json({ ...data, month: monthToDateUsage() });
+});
+
+// Which model the reviews run on. prsnooze never passes --model, so this is
+// whatever the host's claude CLI defaults to — see lib/claude-model.js. Read the
+// same way as the plan meter (a local slash command, cached), and shown to
+// everyone, because "which model reviewed my PR" is the first thing that
+// explains why a review reads the way it does.
+app.get("/api/model", async (_req, res) => {
+  const data = await getModel({ claudeBin: CLAUDE_BIN });
+  res.set("Cache-Control", "no-store");
+  if (!data.ok && data.detail) {
+    // Only the host can fix a broken reading, so the reason goes to their
+    // console — the page just says it doesn't know.
+    console.warn(`[model] unavailable: ${data.detail}`);
+    const { detail, ...safe } = data;
+    return res.json(safe);
+  }
+  res.json(data);
 });
 
 // Prove knowledge of the admin password → set the privilege cookie.
