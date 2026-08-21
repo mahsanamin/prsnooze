@@ -29,7 +29,6 @@ const panels = $("panels");
 const emptyState = $("empty-state");
 const faviconEl = $("favicon");
 const toastEl = $("toast");
-const lockChip = $("lock-chip");
 const modelChip = $("model-chip");
 const usageChip = $("usage-chip");
 const usageFill = $("usage-fill");
@@ -44,6 +43,10 @@ const unlockPass = $("unlock-pass");
 const unlockEye = $("unlock-eye");
 const unlockErr = $("unlock-err");
 const unlockCancel = $("unlock-cancel");
+const confirmBackdrop = $("confirm-backdrop");
+const confirmSub = $("confirm-sub");
+const confirmOk = $("confirm-ok");
+const confirmCancel = $("confirm-cancel");
 
 const LS_SELECTED = "prsnooze:selected";
 // Same key as the old sound toggle, so nobody's existing preference resets.
@@ -73,7 +76,7 @@ let welcomeShown = false;
 let passwordConfigured = false;
 let unlocked = false;
 let relockTimer = null;
-let pendingApprove = null; // {id, btn} — an approve click waiting on unlock
+let confirmingApprove = null; // id of the PR the confirm dialog is asking about
 // "Tell me when a review finishes" — one flag for the chime and the desktop
 // notification. Declared here with the rest of the module state: playChime() and
 // the toggle's own handler are defined above the init block and both read it.
@@ -358,6 +361,14 @@ function railRow(r) {
     chip.className = "chip";
     chip.textContent = rowStateText(r);
     foot.appendChild(chip);
+    // Merged or closed on GitHub — worth seeing while picking a row, not only
+    // after opening it.
+    if (r.prState && r.prState !== "OPEN") {
+      const ps = document.createElement("span");
+      ps.className = `chip prstate ${r.prState.toLowerCase()}`;
+      ps.textContent = r.prState.toLowerCase();
+      foot.appendChild(ps);
+    }
     if (r.finishedAt) {
       const when = document.createElement("span");
       when.className = "srow-when";
@@ -468,6 +479,10 @@ function selectReview(id) {
   if (!rev.panelLoaded && !rev.es) loadFinishedLog(rev);
   // Only worth asking about a finished review that has a session to resume.
   if (rev.state === "done" && rev.sessionId && !rev.resume) loadResumeCheck(rev);
+  // The PR's own state gates the Approve button and draws the merged/closed
+  // chip, and neither depends on there being a session — so it's asked for
+  // every finished review, independently of the resume check.
+  if (rev.state === "done") loadPrState(rev);
   applyActivityState(rev);
   renderLists();
   updateSubmitButton();
@@ -603,16 +618,26 @@ function renderHead(rev) {
   badge.className = `badge ${rev.state}`;
   badge.textContent = badgeText(rev);
   head.appendChild(badge);
+  // What happened to the PR itself, separate from what the review said about
+  // it. A merged PR is the more important of the two facts and used to be
+  // invisible here — the badge only ever reported the review's own outcome.
+  if (rev.prState && rev.prState !== "OPEN") {
+    const st = document.createElement("span");
+    st.className = `badge prstate ${rev.prState.toLowerCase()}`;
+    st.textContent = rev.prState.toLowerCase();
+    st.title = rev.prState === "MERGED"
+      ? "This PR has been merged on GitHub"
+      : "This PR was closed on GitHub without merging";
+    head.appendChild(st);
+  }
   if (rev.state === "done") {
-    // Approve button. Shown whenever a password is configured on the host.
-    // When the browser is locked it renders muted with a 🔒; clicking it opens
-    // the unlock prompt (and continues the approve once unlocked). The server
-    // approves under its own gh identity, so a self-authored PR is refused.
-    if (rev.outcome === "approved") {
-      const b = document.createElement("button");
-      b.className = "approve"; b.disabled = true; b.textContent = "Approved"; b.prepend(iconEl("check"));
-      head.appendChild(b);
-    } else if (passwordConfigured) {
+    // Approve button. Rendered on anything still approvable (see canApprovePr)
+    // even on a host that hasn't opted in, so the action is discoverable. When
+    // the browser is locked it renders muted with a 🔒 and clicking it only
+    // opens the password prompt — unlocking never approves anything by itself.
+    // Unlocked, a click asks for confirmation first. The server approves under
+    // its own gh identity, so a self-authored PR is refused.
+    if (canApprovePr(rev)) {
       const b = document.createElement("button");
       b.className = "approve";
       b.dataset.id = rev.id;
@@ -621,7 +646,9 @@ function renderHead(rev) {
         b.title = `Can't approve your own PR (prsnooze approves as @${hostLogin})`;
       } else if (!unlocked) {
         b.classList.add("locked"); b.textContent = "Approve PR"; b.prepend(iconEl("lock"));
-        b.title = "Locked — click to enter the admin password";
+        b.title = passwordConfigured
+          ? "Locked — click to enter the admin password"
+          : "Approving isn't available on this prsnooze yet";
       } else {
         b.textContent = "Approve PR"; b.prepend(iconEl("check"));
       }
@@ -710,7 +737,26 @@ function badgeText(rev) {
   if (rev.outcome) return outcomeLabel(rev.outcome);
   return rev.state;
 }
-function needsApprove(rev) { return rev.state === "done" && rev.outcome !== "approved"; }
+// Whether the Approve button belongs on this review at all.
+//
+// The gate waits for an answer from GitHub before it draws anything: showing the
+// button and then yanking it away a moment later — which is what happened on a
+// merged PR while the state was still in flight — reads as a glitch, and worse,
+// it's clickable during that moment. So "not asked yet" renders nothing, and the
+// button appears only once the PR is known to be open.
+//
+// An unreachable GitHub (checked, but ok:false) is the one case where the button
+// still shows: we can't distinguish merged from open, and refusing every
+// approval because a `gh` call failed is worse than letting GitHub refuse it.
+function canApprovePr(rev) {
+  if (rev.state !== "done") return false;
+  if (rev.outcome === "approved") return false;
+  if (rev.skipped && rev.skipReason === "pr_not_open") return false;
+  if (!rev.prStateChecked) return false;          // still asking — draw nothing
+  if (rev.prApproved) return false;               // someone already approved it
+  if (rev.prStateOk === false) return true;       // couldn't ask; let GitHub decide
+  return rev.prState === "OPEN";
+}
 
 function renderStepper(rev) {
   const el = rev.els?.stepper;
@@ -954,6 +1000,9 @@ function finish(rev, state) {
   renderHead(rev); renderStepper(rev); renderSummary(rev); renderLists();
   if (rev.id === selectedId) { updateSubmitButton(); applyActivityState(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
+  // A just-finished review has no PR state yet; ask now so Approve settles into
+  // its final shape instead of appearing and then withdrawing.
+  if (first) loadPrState(rev);
   updateStatusLight();
   // A review just spent part of the plan — that's the moment the meter is worth
   // re-reading. Slightly delayed: the CLI writes its final limit state as the
@@ -967,9 +1016,11 @@ function finish(rev, state) {
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
   if (ap && ap.dataset.id && !ap.disabled) {
-    // Locked → open the unlock prompt and remember to continue this approve.
-    if (!unlocked) { pendingApprove = { id: ap.dataset.id }; openUnlock(); return; }
-    approveReview(ap.dataset.id, ap); return;
+    // Locked → the password prompt, and nothing more: unlocking is its own
+    // step, so a correct password leaves you with an armed button, not a
+    // posted approval. Unlocked → confirm, then approve.
+    if (!unlocked) { openUnlock(); return; }
+    openConfirm(ap.dataset.id); return;
   }
   const fr = e.target.closest(".resume.force");
   if (fr && fr.dataset.forceId && !fr.disabled) { verifyReview(fr.dataset.forceId, true); return; }
@@ -996,13 +1047,17 @@ async function approveReview(id, btn) {
     if (!r.ok) {
       // Cookie expired / never set → re-prompt for the password, then retry.
       if (r.status === 401 || data.locked) {
-        unlocked = false; updateLockChip();
-        pendingApprove = { id };
+        unlocked = false;
         renderHead(rev);
+        showToast("🔒 That unlock expired — enter the password again.");
         openUnlock();
         return;
       }
       showToast("Couldn't approve: " + escapeHtml(data.error || `HTTP ${r.status}`));
+      // GitHub refusing an approval usually means the PR moved under us — merged,
+      // closed, or approved by someone else. Re-ask, so the button and the chip
+      // settle on the truth instead of inviting another failing click.
+      loadPrState(rev, { force: true });
       renderHead(rev);
       return;
     }
@@ -1016,30 +1071,23 @@ async function approveReview(id, btn) {
 }
 
 // --------------------------------------------------------- privilege / lock -
-function updateLockChip() {
-  if (!lockChip) return;
-  lockChip.hidden = !passwordConfigured;
-  lockChip.textContent = unlocked ? "🔓 Unlocked" : "🔒 Locked";
-  lockChip.classList.toggle("on", unlocked);
-  lockChip.title = unlocked
-    ? "Privileged actions unlocked in this browser — click to re-lock"
-    : "Privileged actions locked — click to enter the admin password";
-}
+// There is no lock indicator in the header any more. The Approve button carries
+// the whole state — muted with a 🔒 when locked, green when armed — so the lock
+// is only ever mentioned where it actually blocks something.
 function setUnlocked(on) {
   unlocked = on;
-  updateLockChip();
   for (const r of reviews.values()) if (r.els?.head) renderHead(r);
   clearTimeout(relockTimer);
   if (on) relockTimer = setTimeout(() => { setUnlocked(false); showToast("🔒 Re-locked after 1 hour."); }, 60 * 60 * 1000);
 }
 function openUnlock() {
-  if (!passwordConfigured) { showToast("Approve is disabled — no admin password is set on the host."); return; }
+  if (!passwordConfigured) { showToast("Approving isn't available yet — ask whoever runs this prsnooze to turn it on."); return; }
   unlockErr.hidden = true; unlockPass.value = "";
   unlockPass.type = "password"; if (unlockEye) unlockEye.textContent = "👁";
   unlockBackdrop.hidden = false;
   setTimeout(() => unlockPass.focus(), 30);
 }
-function closeUnlock() { unlockBackdrop.hidden = true; pendingApprove = null; }
+function closeUnlock() { unlockBackdrop.hidden = true; }
 async function submitUnlock() {
   const password = unlockPass.value;
   if (!password) { unlockErr.textContent = "Enter the password."; unlockErr.hidden = false; return; }
@@ -1058,23 +1106,42 @@ async function submitUnlock() {
     unlockPass.value = "";
     unlockBackdrop.hidden = true;
     setUnlocked(true);
-    showToast("🔓 Unlocked for 1 hour.");
-    // Continue an approve that was waiting on the password.
-    const p = pendingApprove; pendingApprove = null;
-    if (p) {
-      const btn = document.querySelector(`.review-panel.active .approve[data-id="${p.id}"]`);
-      approveReview(p.id, btn || null);
-    }
+    showToast("🔓 Unlocked for 1 hour — Approve PR is now armed.");
   } catch (e) {
     unlockErr.textContent = "Couldn't reach the server."; unlockErr.hidden = false;
   }
 }
-async function relock() {
-  try { await fetch("/api/lock", { method: "POST" }); } catch {}
-  setUnlocked(false);
-  showToast("🔒 Locked.");
+
+// ------------------------------------------------------- approve confirmation -
+// Unlocking arms the button; this is the step that actually posts. Approving
+// writes to someone else's PR under the host's GitHub account, which is not
+// something a stray click should be able to do.
+function openConfirm(id) {
+  const rev = reviews.get(id);
+  if (!rev) return;
+  confirmingApprove = id;
+  const num = rev.prMeta?.number || prNumberFromUrl(rev.prUrl);
+  const where = rev.prMeta?.nameWithOwner ? `${rev.prMeta.nameWithOwner}#${num}` : (num ? `PR #${num}` : "this PR");
+  confirmSub.textContent = hostLogin
+    ? `This posts an approving review on ${where} as @${hostLogin}. It shows up on GitHub straight away.`
+    : `This posts an approving review on ${where} under this machine's GitHub login. It shows up on GitHub straight away.`;
+  confirmOk.disabled = false;
+  confirmOk.textContent = "Yes, approve";
+  confirmBackdrop.hidden = false;
+  setTimeout(() => confirmOk.focus(), 30);
 }
-if (lockChip) lockChip.addEventListener("click", () => { if (unlocked) relock(); else openUnlock(); });
+function closeConfirm() { confirmBackdrop.hidden = true; confirmingApprove = null; }
+if (confirmOk) confirmOk.addEventListener("click", () => {
+  const id = confirmingApprove;
+  if (!id) return closeConfirm();
+  confirmOk.disabled = true;
+  closeConfirm();
+  const btn = document.querySelector(`.review-panel.active .approve[data-id="${id}"]`);
+  approveReview(id, btn || null);
+});
+if (confirmCancel) confirmCancel.addEventListener("click", closeConfirm);
+if (confirmBackdrop) confirmBackdrop.addEventListener("click", (e) => { if (e.target === confirmBackdrop) closeConfirm(); });
+
 if (unlockForm) unlockForm.addEventListener("submit", (e) => { e.preventDefault(); submitUnlock(); });
 if (unlockCancel) unlockCancel.addEventListener("click", closeUnlock);
 if (unlockEye) unlockEye.addEventListener("click", () => {
@@ -1084,7 +1151,11 @@ if (unlockEye) unlockEye.addEventListener("click", () => {
   unlockPass.focus();
 });
 if (unlockBackdrop) unlockBackdrop.addEventListener("click", (e) => { if (e.target === unlockBackdrop) closeUnlock(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !unlockBackdrop.hidden) closeUnlock(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (confirmBackdrop && !confirmBackdrop.hidden) { closeConfirm(); return; }
+  if (!unlockBackdrop.hidden) closeUnlock();
+});
 
 // ----------------------------------------------------------- active model ---
 // Every review runs on whatever the host's claude CLI defaults to — prsnooze
@@ -1320,6 +1391,31 @@ async function verifyReview(id, force = false) {
 // Ask the server whether resuming this review is worth it. Read-only, and its
 // answer is what the Resume button renders — so the button can say "the author
 // pushed 2 commits and replied to 3 comments" instead of just being clickable.
+// Ask the server for the PR's current state. Drives two things: whether Approve
+// is drawn at all, and the merged/closed chip. Re-asked at most once per review
+// unless something invalidates it (an approve attempt that GitHub refused).
+async function loadPrState(rev, { force = false } = {}) {
+  if (!rev || rev.prStateLoading) return;
+  if (rev.prStateChecked && !force) return;
+  rev.prStateLoading = true;
+  try {
+    const r = await fetch(`/api/jobs/${rev.id}/pr-state`);
+    const data = r.ok ? await r.json() : { ok: false };
+    rev.prStateOk = !!data.ok;
+    rev.prState = String(data.state || "").toUpperCase() || null;
+    rev.prApproved = !!data.approved;
+  } catch {
+    rev.prStateOk = false;
+    rev.prState = null;
+    rev.prApproved = false;
+  } finally {
+    rev.prStateLoading = false;
+    rev.prStateChecked = true;
+    renderHead(rev);
+    renderLists();
+  }
+}
+
 async function loadResumeCheck(rev) {
   if (!rev || rev.resumeLoading) return;
   rev.resumeLoading = true;
@@ -1682,7 +1778,6 @@ async function loadConfig() {
       hostNameEl.textContent = `on ${hostName}'s machine`;
       if (heroHost) heroHost.textContent = cfg.hostLogin ? ` as @${cfg.hostLogin}` : ` as ${hostName}`;
     }
-    updateLockChip();
     // The usage chip names the host and has a host-only fallback state, so it
     // can only render properly once the config has landed.
     renderUsage();

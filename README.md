@@ -192,7 +192,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 
 Risky or large PRs come back as *commented* on purpose — the merge decision stays with a human. On any finished review there's an **Approve PR** button, gated by a shared password so it works over a proxy as well as on localhost.
 
-Set `PRSNOOZE_ADMIN_PASSWORD` to switch it on (leave it unset and approving is disabled entirely). The password is only ever checked on the server; unlocking sets a signed one-hour cookie per browser. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30 — a shared password on a page your team can reach is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
+Set `PRSNOOZE_ADMIN_PASSWORD` to switch it on. There is no default: leave it unset and the button still shows, but clicking it just tells you the host hasn't enabled approving — the server refuses the call outright. The password is only ever checked on the server; unlocking sets a signed one-hour cookie per browser. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30 — a shared password on a page your team can reach is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
 
 ## When something goes wrong
 

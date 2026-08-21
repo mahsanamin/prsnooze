@@ -15,7 +15,7 @@ const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
 const { getUsage } = require("./lib/claude-usage");
 const { getModel } = require("./lib/claude-model");
-const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -368,7 +368,7 @@ function unlockSucceeded(ip) {
 }
 
 app.post("/api/unlock", (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
+  if (!ADMIN_PASSWORD) return res.status(400).json({ error: "approving isn't available on this prsnooze yet" });
   const ip = req.ip || req.socket?.remoteAddress || "unknown";
   const throttled = unlockThrottle(ip);
   if (throttled.blocked) {
@@ -511,6 +511,28 @@ async function assessJobResume(job) {
   return assessment;
 }
 
+// Read-only: is this PR still open, and has it already been approved? The
+// Approve button is drawn from this, so it deliberately does NOT reuse
+// resume-check — that answers a different question and returns nothing at all
+// for a review with no Claude session. Cached briefly: selecting a review asks,
+// and clicking between reviews shouldn't mean a `gh` call per click.
+const PR_STATE_TTL_MS = 30_000;
+const prStateCache = new Map(); // prUrl -> { at, value }
+
+app.get("/api/jobs/:id/pr-state", async (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  const key = job.prUrl || "";
+  const hit = prStateCache.get(key);
+  if (hit && Date.now() - hit.at < PR_STATE_TTL_MS) return res.json(hit.value);
+  const value = await fetchPrState(job.prUrl);
+  if (value.ok) {
+    if (prStateCache.size > 500) prStateCache.clear();
+    prStateCache.set(key, { at: Date.now(), value });
+  }
+  res.json(value);
+});
+
 // Read-only: what would happen if you hit resume, and why.
 app.get("/api/jobs/:id/resume-check", async (req, res) => {
   const job = jobs.get(req.params.id);
@@ -581,7 +603,7 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
 // identity every review posts under — no token/env var for gh). The caller
 // must hold a valid privilege cookie (see /api/unlock); otherwise 401.
 app.post("/api/jobs/:id/approve", async (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(403).json({ error: "approve is disabled — no admin password configured on the host" });
+  if (!ADMIN_PASSWORD) return res.status(403).json({ error: "approving isn't available on this prsnooze yet" });
   if (!isUnlocked(req)) return res.status(401).json({ error: "locked — enter the admin password to approve", locked: true });
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });

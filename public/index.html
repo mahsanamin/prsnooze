@@ -57,7 +57,6 @@
             <div id="usage-foot" class="usage-foot"></div>
           </div>
         </div>
-        <button id="lock-chip" class="lockchip" type="button" hidden></button>
         <!-- One control for "tell me when a review finishes": the chime AND the
              desktop notification. It replaced a volume toggle sitting next to a
              separate emoji that only reported browser permission state — two
@@ -179,6 +178,24 @@
           <button id="unlock-submit" type="submit" class="unlock-submit">Unlock</button>
         </div>
       </form>
+    </div>
+
+    <!-- Approving posts to a real PR under the host's GitHub identity, so the
+         click is confirmed before it goes out. Same shell as the unlock modal. -->
+    <div id="confirm-backdrop" class="unlock-backdrop" hidden>
+      <div id="confirm-modal" class="unlock-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div id="confirm-title" class="unlock-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+          Approve this PR?
+        </div>
+        <div id="confirm-sub" class="unlock-sub"></div>
+        <div class="unlock-actions">
+          <button id="confirm-cancel" type="button" class="unlock-cancel">Cancel</button>
+          <button id="confirm-ok" type="button" class="confirm-ok">Yes, approve</button>
+        </div>
+      </div>
     </div>
 
     <script src="/app.js"></script>

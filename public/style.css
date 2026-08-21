@@ -432,10 +432,6 @@ body::after {
 }
 
 /* privilege lock chip + unlock prompt */
-.lockchip { display: inline-flex; gap: 5px; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer; }
-.lockchip:hover { border-color: var(--accent); color: var(--text); }
-.lockchip.on { color: var(--green); border-color: rgba(82, 223, 160, 0.4); background: rgba(82, 223, 160, 0.1); }
-.lockchip[hidden] { display: none; }
 .approve.locked { background: var(--panel-2); color: var(--muted); border: 1px dashed var(--border-2); box-shadow: none; }
 .approve.locked:hover { color: var(--text); border-color: var(--accent); }
 .unlock-backdrop { position: fixed; inset: 0; background: rgba(5, 6, 14, 0.66); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
@@ -455,6 +451,9 @@ body::after {
 .unlock-cancel:hover { color: var(--text); border-color: var(--faint); }
 .unlock-submit { background: linear-gradient(180deg, #ffc072, var(--accent)); color: var(--accent-ink); border: none; font-weight: 700; padding: 8px 17px; border-radius: 9px; cursor: pointer; font-size: 13px; }
 .unlock-submit:hover { filter: brightness(1.06); }
+.confirm-ok { background: linear-gradient(180deg, #6ee7b0, var(--green)); color: #04291a; border: none; font-weight: 700; padding: 8px 17px; border-radius: 9px; cursor: pointer; font-size: 13px; }
+.confirm-ok:hover:not(:disabled) { filter: brightness(1.06); }
+.confirm-ok:disabled { opacity: 0.55; cursor: default; }
 .unlock-modal.shake { animation: shake 0.35s; }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
 
@@ -655,6 +654,12 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .badge.done { background: rgba(82, 223, 160, 0.14); color: var(--green); border-color: rgba(82, 223, 160, 0.35); }
 .badge.failed { background: rgba(255, 107, 129, 0.14); color: var(--red); border-color: rgba(255, 107, 129, 0.35); }
 .badge.interrupted { background: rgba(151, 161, 198, 0.12); color: var(--muted); }
+/* The PR's own fate, next to the review's outcome. Merged borrows GitHub's
+   purple so it isn't mistaken for a review verdict; closed is muted red. */
+.badge.prstate.merged { background: rgba(163, 113, 247, 0.16); color: #c4a1ff; border-color: rgba(163, 113, 247, 0.4); }
+.badge.prstate.closed { background: rgba(255, 107, 129, 0.12); color: var(--red); border-color: rgba(255, 107, 129, 0.3); }
+.chip.prstate.merged { background: rgba(163, 113, 247, 0.16); color: #c4a1ff; }
+.chip.prstate.closed { background: rgba(255, 107, 129, 0.12); color: var(--red); }
 
 .approve { display: inline-flex; align-items: center; gap: 6px; background: linear-gradient(180deg, #6ee7b0, var(--green)); color: #04291a; border: none; font-weight: 700; padding: 7px 15px; border-radius: 9px; font-size: 13px; cursor: pointer; box-shadow: 0 6px 16px -8px rgba(82, 223, 160, 0.7); }
 .approve:hover:not(:disabled) { filter: brightness(1.06); }
