@@ -516,20 +516,37 @@ async function assessJobResume(job) {
 // resume-check — that answers a different question and returns nothing at all
 // for a review with no Claude session. Cached briefly: selecting a review asks,
 // and clicking between reviews shouldn't mean a `gh` call per click.
+//
+// Failures are cached too, for much less time. A logged-out or timing-out `gh`
+// is precisely the state where the client deliberately fails open and keeps the
+// Approve button clickable — so every click used to spawn another `gh pr view`
+// with a 20s timeout, from an endpoint that needs no password. A few seconds of
+// "still broken" is a good enough answer.
 const PR_STATE_TTL_MS = 30_000;
-const prStateCache = new Map(); // prUrl -> { at, value }
+const PR_STATE_FAIL_TTL_MS = 5_000;
+const prStateCache = new Map(); // prUrl -> { at, ttl, value }
+
+// The cache is keyed by PR, not by browser, so anything that makes the stored
+// answer wrong has to drop it for everyone.
+function forgetPrState(prUrl) {
+  prStateCache.delete(prUrl || "");
+}
 
 app.get("/api/jobs/:id/pr-state", async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   const key = job.prUrl || "";
+  // ?refresh=1 is the client saying "the answer you gave me turned out to be
+  // wrong" — an approval GitHub refused, most often. Serving the cached entry
+  // there would hand back the exact state that was just disproved, and since
+  // the refusal lands seconds after the entry was written, that is the common
+  // path rather than the edge case.
+  if (req.query.refresh === "1") forgetPrState(key);
   const hit = prStateCache.get(key);
-  if (hit && Date.now() - hit.at < PR_STATE_TTL_MS) return res.json(hit.value);
+  if (hit && Date.now() - hit.at < hit.ttl) return res.json(hit.value);
   const value = await fetchPrState(job.prUrl);
-  if (value.ok) {
-    if (prStateCache.size > 500) prStateCache.clear();
-    prStateCache.set(key, { at: Date.now(), value });
-  }
+  if (prStateCache.size > 500) prStateCache.clear();
+  prStateCache.set(key, { at: Date.now(), ttl: value.ok ? PR_STATE_TTL_MS : PR_STATE_FAIL_TTL_MS, value });
   res.json(value);
 });
 
@@ -619,6 +636,10 @@ app.post("/api/jobs/:id/approve", async (req, res) => {
     job.events.push({ ts: Date.now(), kind: "outcome_detected", outcome: "approved" });
     job.events.push({ ts: Date.now(), kind: "log", message: `Approved by @${HOST_LOGIN || "host"} via prsnooze.` });
     persistJob(job);
+    // The PR is now approved, so the cached "open, unapproved" answer is stale
+    // for every browser watching it, not just this one. Drop it so nobody else
+    // is offered an Approve button that can only fail.
+    forgetPrState(job.prUrl);
     res.json({ ok: true, outcome: "approved" });
   } catch (e) {
     const detail = (e.stderr || e.message || "").toString().trim().split("\n").slice(-3).join(" ");

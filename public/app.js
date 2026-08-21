@@ -47,6 +47,7 @@ const confirmBackdrop = $("confirm-backdrop");
 const confirmSub = $("confirm-sub");
 const confirmOk = $("confirm-ok");
 const confirmCancel = $("confirm-cancel");
+const lockBtn = $("lock-btn");
 
 const LS_SELECTED = "prsnooze:selected";
 // Same key as the old sound toggle, so nobody's existing preference resets.
@@ -631,13 +632,26 @@ function renderHead(rev) {
     head.appendChild(st);
   }
   if (rev.state === "done") {
-    // Approve button. Rendered on anything still approvable (see canApprovePr)
-    // even on a host that hasn't opted in, so the action is discoverable. When
-    // the browser is locked it renders muted with a 🔒 and clicking it only
-    // opens the password prompt — unlocking never approves anything by itself.
-    // Unlocked, a click asks for confirmation first. The server approves under
-    // its own gh identity, so a self-authored PR is refused.
-    if (canApprovePr(rev)) {
+    // One slot, two things it can hold: the approval this review already posted,
+    // or the button to post one.
+    if (rev.outcome === "approved") {
+      // Not an action — the answer to "where did the Approve button go?". It
+      // also says something the review's own badge doesn't: the badge reports
+      // what this review decided, this reports that an approval is on the PR.
+      const b = document.createElement("button");
+      b.className = "approve";
+      b.disabled = true;
+      b.textContent = "Approved";
+      b.prepend(iconEl("check"));
+      b.title = "This PR is approved on GitHub";
+      head.appendChild(b);
+    } else if (canApprovePr(rev)) {
+      // Approve button. Rendered on anything still approvable (see canApprovePr)
+      // even on a host that hasn't opted in, so the action is discoverable. When
+      // the browser is locked it renders muted with a 🔒 and clicking it only
+      // opens the password prompt — unlocking never approves anything by itself.
+      // Unlocked, a click asks for confirmation first. The server approves under
+      // its own gh identity, so a self-authored PR is refused.
       const b = document.createElement("button");
       b.className = "approve";
       b.dataset.id = rev.id;
@@ -737,26 +751,9 @@ function badgeText(rev) {
   if (rev.outcome) return outcomeLabel(rev.outcome);
   return rev.state;
 }
-// Whether the Approve button belongs on this review at all.
-//
-// The gate waits for an answer from GitHub before it draws anything: showing the
-// button and then yanking it away a moment later — which is what happened on a
-// merged PR while the state was still in flight — reads as a glitch, and worse,
-// it's clickable during that moment. So "not asked yet" renders nothing, and the
-// button appears only once the PR is known to be open.
-//
-// An unreachable GitHub (checked, but ok:false) is the one case where the button
-// still shows: we can't distinguish merged from open, and refusing every
-// approval because a `gh` call failed is worse than letting GitHub refuse it.
-function canApprovePr(rev) {
-  if (rev.state !== "done") return false;
-  if (rev.outcome === "approved") return false;
-  if (rev.skipped && rev.skipReason === "pr_not_open") return false;
-  if (!rev.prStateChecked) return false;          // still asking — draw nothing
-  if (rev.prApproved) return false;               // someone already approved it
-  if (rev.prStateOk === false) return true;       // couldn't ask; let GitHub decide
-  return rev.prState === "OPEN";
-}
+// canApprovePr() — whether the Approve button belongs on this review — lives in
+// can-approve.js, loaded just before this file. It's pure, and it carries enough
+// reasoning to deserve tests (test/can-approve.test.js).
 
 function renderStepper(rev) {
   const el = rev.els?.stepper;
@@ -1001,8 +998,12 @@ function finish(rev, state) {
   if (rev.id === selectedId) { updateSubmitButton(); applyActivityState(rev); }
   if (first && !rev.notified && !rev.replaying) { rev.notified = true; notify(rev); playChime(statusMeta(rev).needsYou); }
   // A just-finished review has no PR state yet; ask now so Approve settles into
-  // its final shape instead of appearing and then withdrawing.
-  if (first) loadPrState(rev);
+  // its final shape instead of appearing and then withdrawing. Only for a clean
+  // finish, the same gate selectReview uses: a failed or interrupted run has no
+  // Approve button to settle, and this probe costs a `gh` call on the host. A
+  // skip still asks — it renders no button either, but "skipped: the PR is no
+  // longer open" is worth the chip that says whether it was merged or closed.
+  if (first && state === "done") loadPrState(rev);
   updateStatusLight();
   // A review just spent part of the plan — that's the moment the meter is worth
   // re-reading. Slightly delayed: the CLI writes its final limit state as the
@@ -1071,14 +1072,26 @@ async function approveReview(id, btn) {
 }
 
 // --------------------------------------------------------- privilege / lock -
-// There is no lock indicator in the header any more. The Approve button carries
-// the whole state — muted with a 🔒 when locked, green when armed — so the lock
-// is only ever mentioned where it actually blocks something.
+// There is no standing lock indicator in the header: the Approve button carries
+// the state — muted with a 🔒 when locked, green when armed — so the lock is
+// only mentioned where it actually blocks something. The one thing the button
+// can't express is "I'm done approving", so a Lock control appears next to it
+// while unlocked, and only while unlocked. On a shared browser that beats
+// waiting out the hour.
 function setUnlocked(on) {
   unlocked = on;
+  if (lockBtn) lockBtn.hidden = !on;
   for (const r of reviews.values()) if (r.els?.head) renderHead(r);
   clearTimeout(relockTimer);
   if (on) relockTimer = setTimeout(() => { setUnlocked(false); showToast("🔒 Re-locked after 1 hour."); }, 60 * 60 * 1000);
+}
+// Clear the privilege cookie now. The client flag drops either way: the cookie's
+// own issued-at is what the server trusts, so a flag that ran ahead of a failed
+// request costs at most a 401 and a fresh password prompt.
+async function relock() {
+  try { await fetch("/api/lock", { method: "POST" }); } catch {}
+  setUnlocked(false);
+  showToast("🔒 Locked. Approving needs the password again.");
 }
 function openUnlock() {
   if (!passwordConfigured) { showToast("Approving isn't available yet — ask whoever runs this prsnooze to turn it on."); return; }
@@ -1111,6 +1124,8 @@ async function submitUnlock() {
     unlockErr.textContent = "Couldn't reach the server."; unlockErr.hidden = false;
   }
 }
+
+if (lockBtn) lockBtn.addEventListener("click", relock);
 
 // ------------------------------------------------------- approve confirmation -
 // Unlocking arms the button; this is the step that actually posts. Approving
@@ -1399,7 +1414,10 @@ async function loadPrState(rev, { force = false } = {}) {
   if (rev.prStateChecked && !force) return;
   rev.prStateLoading = true;
   try {
-    const r = await fetch(`/api/jobs/${rev.id}/pr-state`);
+    // force means "what you told me turned out to be wrong", so it has to get
+    // past the server's own 30s cache as well as the prStateChecked guard above
+    // — otherwise a refused approval is handed back the state it just disproved.
+    const r = await fetch(`/api/jobs/${rev.id}/pr-state${force ? "?refresh=1" : ""}`);
     const data = r.ok ? await r.json() : { ok: false };
     rev.prStateOk = !!data.ok;
     rev.prState = String(data.state || "").toUpperCase() || null;

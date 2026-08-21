@@ -57,6 +57,17 @@
             <div id="usage-foot" class="usage-foot"></div>
           </div>
         </div>
+        <!-- Re-lock, and nothing else. Hidden unless this browser is actually
+             unlocked, so the header doesn't carry a permanent lock readout —
+             the Approve button already says whether it's armed. Shared browser,
+             done approving: click this instead of waiting out the hour.
+             See relock() / setUnlocked() in app.js. -->
+        <button id="lock-btn" class="lockchip" type="button" title="Re-lock approving in this browser" hidden>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4.5" y="10.5" width="15" height="10" rx="2" /><path d="M8.2 10.5V7.2a3.8 3.8 0 0 1 7.6 0v3.3" />
+          </svg>
+          Lock
+        </button>
         <!-- One control for "tell me when a review finishes": the chime AND the
              desktop notification. It replaced a volume toggle sitting next to a
              separate emoji that only reported browser permission state — two
@@ -198,6 +209,8 @@
       </div>
     </div>
 
+    <!-- Pure, testable, and needed by app.js's first render. -->
+    <script src="/can-approve.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

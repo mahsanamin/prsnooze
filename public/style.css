@@ -432,6 +432,12 @@ body::after {
 }
 
 /* privilege lock chip + unlock prompt */
+/* Only on screen while this browser is unlocked, so it reads as the action it
+   is ("lock now") rather than a status light. Green, matching the armed Approve
+   button it's there to disarm. */
+.lockchip { display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; font-weight: 600; padding: 4px 11px; border-radius: 999px; cursor: pointer; color: var(--green); border: 1px solid rgba(82, 223, 160, 0.4); background: rgba(82, 223, 160, 0.1); }
+.lockchip:hover { color: var(--text); border-color: var(--accent); }
+.lockchip[hidden] { display: none; }
 .approve.locked { background: var(--panel-2); color: var(--muted); border: 1px dashed var(--border-2); box-shadow: none; }
 .approve.locked:hover { color: var(--text); border-color: var(--accent); }
 .unlock-backdrop { position: fixed; inset: 0; background: rgba(5, 6, 14, 0.66); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
