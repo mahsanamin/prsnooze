@@ -524,7 +524,13 @@ async function assessJobResume(job) {
 // "still broken" is a good enough answer.
 const PR_STATE_TTL_MS = 30_000;
 const PR_STATE_FAIL_TTL_MS = 5_000;
-const prStateCache = new Map(); // prUrl -> { at, ttl, value }
+// How often a client may insist on a fresh probe for the same PR. The real
+// caller does it once, after an approval GitHub refused; anything faster than
+// this is a loop, and ?refresh=1 needs no password.
+const PR_STATE_REFRESH_FLOOR_MS = 3_000;
+const prStateCache = new Map();   // prUrl -> { at, ttl, value }
+const prStateForced = new Map();  // prUrl -> ts of the last honoured ?refresh=1
+const prStateInflight = new Map(); // prUrl -> in-flight probe
 
 // The cache is keyed by PR, not by browser, so anything that makes the stored
 // answer wrong has to drop it for everyone.
@@ -532,22 +538,44 @@ function forgetPrState(prUrl) {
   prStateCache.delete(prUrl || "");
 }
 
+// One `gh` per PR at a time. The cache alone doesn't give this: several clients
+// selecting the same review in the same second all miss it and all spawn their
+// own process, and a `gh` that ends in the 20s timeout leaves a long window for
+// that to happen in. Callers of a probe already running just wait for it.
+function probePrState(key, prUrl) {
+  const running = prStateInflight.get(key);
+  if (running) return running;
+  const probe = fetchPrState(prUrl) // never throws — see lib/github.js
+    .then((value) => {
+      if (prStateCache.size > 500) prStateCache.clear();
+      prStateCache.set(key, { at: Date.now(), ttl: value.ok ? PR_STATE_TTL_MS : PR_STATE_FAIL_TTL_MS, value });
+      return value;
+    })
+    .finally(() => prStateInflight.delete(key));
+  prStateInflight.set(key, probe);
+  return probe;
+}
+
 app.get("/api/jobs/:id/pr-state", async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   const key = job.prUrl || "";
+  const now = Date.now();
   // ?refresh=1 is the client saying "the answer you gave me turned out to be
   // wrong" — an approval GitHub refused, most often. Serving the cached entry
   // there would hand back the exact state that was just disproved, and since
   // the refusal lands seconds after the entry was written, that is the common
-  // path rather than the edge case.
-  if (req.query.refresh === "1") forgetPrState(key);
+  // path rather than the edge case. Rate-limited per PR so it can't be used to
+  // spend the host's processes: a second insistence inside the floor reads the
+  // entry the first one just refreshed, which is the answer it wanted anyway.
+  if (req.query.refresh === "1" && now - (prStateForced.get(key) || 0) >= PR_STATE_REFRESH_FLOOR_MS) {
+    if (prStateForced.size > 500) prStateForced.clear();
+    prStateForced.set(key, now);
+    forgetPrState(key);
+  }
   const hit = prStateCache.get(key);
-  if (hit && Date.now() - hit.at < hit.ttl) return res.json(hit.value);
-  const value = await fetchPrState(job.prUrl);
-  if (prStateCache.size > 500) prStateCache.clear();
-  prStateCache.set(key, { at: Date.now(), ttl: value.ok ? PR_STATE_TTL_MS : PR_STATE_FAIL_TTL_MS, value });
-  res.json(value);
+  if (hit && now - hit.at < hit.ttl) return res.json(hit.value);
+  res.json(await probePrState(key, job.prUrl));
 });
 
 // Read-only: what would happen if you hit resume, and why.

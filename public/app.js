@@ -645,6 +645,18 @@ function renderHead(rev) {
       b.prepend(iconEl("check"));
       b.title = "This PR is approved on GitHub";
       head.appendChild(b);
+    } else if (rev.prApproved && rev.prState === "OPEN") {
+      // The same gap from the other side: this review didn't approve, somebody
+      // else did, and canApprovePr refuses to stack a second approval on top.
+      // Open PRs only — on a merged or closed one the chip above already
+      // accounts for the missing button.
+      const b = document.createElement("button");
+      b.className = "approve";
+      b.disabled = true;
+      b.textContent = "Already approved";
+      b.prepend(iconEl("check"));
+      b.title = "Someone has already approved this PR on GitHub";
+      head.appendChild(b);
     } else if (canApprovePr(rev)) {
       // Approve button. Rendered on anything still approvable (see canApprovePr)
       // even on a host that hasn't opted in, so the action is discoverable. When
@@ -1046,10 +1058,14 @@ async function approveReview(id, btn) {
     const r = await fetch(`/api/jobs/${id}/approve`, { method: "POST" });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      // Cookie expired / never set → re-prompt for the password, then retry.
+      // Cookie expired / never set → re-prompt for the password. Unlocking
+      // doesn't resume the approve; posting one is always its own click.
       if (r.status === 401 || data.locked) {
-        unlocked = false;
-        renderHead(rev);
+        // Through setUnlocked, not a bare assignment: it owns the Lock control
+        // and the relock timer, and leaving those behind means a chip reading
+        // "unlocked" over a locked browser, then an hour-later toast about a
+        // re-lock that already happened.
+        setUnlocked(false);
         showToast("🔒 That unlock expired — enter the password again.");
         openUnlock();
         return;
@@ -1399,13 +1415,15 @@ async function verifyReview(id, force = false) {
     // Reset so the resumed run streams live in place.
     if (rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
     rev.finished = false; rev.state = "running"; rev.outcome = null;
+    // The PR state has to be re-asked too, or finish() finds prStateChecked
+    // still set and skips its probe — and a review resumed hours later would
+    // draw its Approve button from hours-old state, with the outcome that
+    // suppressed it nulled out just above.
+    rev.prStateChecked = false;
     ensurePanel(rev); openStream(rev); selectReview(id); renderLists();
   } catch (e) { showToast("Couldn't resume: " + escapeHtml(e.message)); }
 }
 
-// Ask the server whether resuming this review is worth it. Read-only, and its
-// answer is what the Resume button renders — so the button can say "the author
-// pushed 2 commits and replied to 3 comments" instead of just being clickable.
 // Ask the server for the PR's current state. Drives two things: whether Approve
 // is drawn at all, and the merged/closed chip. Re-asked at most once per review
 // unless something invalidates it (an approve attempt that GitHub refused).
@@ -1434,6 +1452,9 @@ async function loadPrState(rev, { force = false } = {}) {
   }
 }
 
+// Ask the server whether resuming this review is worth it. Read-only, and its
+// answer is what the Resume button renders — so the button can say "the author
+// pushed 2 commits and replied to 3 comments" instead of just being clickable.
 async function loadResumeCheck(rev) {
   if (!rev || rev.resumeLoading) return;
   rev.resumeLoading = true;
@@ -1790,7 +1811,6 @@ async function loadConfig() {
     isHost = !!cfg.isHost;
     hostLogin = cfg.hostLogin || null;
     passwordConfigured = !!cfg.passwordConfigured;
-    unlocked = !!cfg.unlocked;
     if (cfg.host) {
       hostName = cfg.host;
       hostNameEl.textContent = `on ${hostName}'s machine`;
@@ -1799,7 +1819,9 @@ async function loadConfig() {
     // The usage chip names the host and has a host-only fallback state, so it
     // can only render properly once the config has landed.
     renderUsage();
-    if (unlocked) setUnlocked(true); // (re)arm the client-side relock timer
+    // setUnlocked, not a bare assignment: it's the only writer of `unlocked`,
+    // so the Lock control and the relock timer can't drift out of step with it.
+    setUnlocked(!!cfg.unlocked); // also (re)arms the client-side relock timer
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
     updateStatusLight();
   } catch {}
