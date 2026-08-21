@@ -662,6 +662,10 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .badge.interrupted { background: rgba(151, 161, 198, 0.12); color: var(--muted); }
 /* The PR's own fate, next to the review's outcome. Merged borrows GitHub's
    purple so it isn't mistaken for a review verdict; closed is muted red. */
+/* Somebody else's approval on an open PR — green, since it's the same good news
+   an "approved" outcome is, but worded so it can't be read as this review's own
+   verdict sitting next to it. */
+.badge.prapproved { background: rgba(82, 223, 160, 0.14); color: var(--green); border-color: rgba(82, 223, 160, 0.35); }
 .badge.prstate.merged { background: rgba(163, 113, 247, 0.16); color: #c4a1ff; border-color: rgba(163, 113, 247, 0.4); }
 .badge.prstate.closed { background: rgba(255, 107, 129, 0.12); color: var(--red); border-color: rgba(255, 107, 129, 0.3); }
 .chip.prstate.merged { background: rgba(163, 113, 247, 0.16); color: #c4a1ff; }

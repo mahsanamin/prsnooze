@@ -62,6 +62,8 @@ test("an unknown state that isn't a probe failure stays un-approvable", () => {
   assert.equal(canApprovePr(rev({ prStateOk: undefined, prState: null })), false);
 });
 
+// renderHead marks this one with an "already approved" chip, so the missing
+// button has an explanation the review's own badge can't give.
 test("a PR someone else already approved is not approvable", () => {
   assert.equal(canApprovePr(rev({ prApproved: true })), false);
 });
@@ -73,7 +75,8 @@ test("already-approved beats the fail-open", () => {
 });
 
 test("a review that approved the PR itself gets no second button", () => {
-  // The disabled "Approved" affirmation renders in its place — see renderHead.
+  // Nothing renders in its place: the head badge already reads "approved", and
+  // a disabled Approved button beside it was just the same word twice.
   assert.equal(canApprovePr(rev({ outcome: "approved" })), false);
 });
 

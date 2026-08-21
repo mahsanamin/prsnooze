@@ -631,33 +631,21 @@ function renderHead(rev) {
       : "This PR was closed on GitHub without merging";
     head.appendChild(st);
   }
+  // Somebody else's approval. A fact about the PR, like the merged chip beside
+  // it — so it renders as one, not as a disabled button pretending to be an
+  // action. Two conditions keep it from repeating what's already on screen: the
+  // review's own badge says "approved" when THIS review approved (which is why
+  // there is no affirmation for that case — it would be the same word twice),
+  // and a merged or closed PR is already accounted for above.
+  if (rev.prApproved && rev.prState === "OPEN" && rev.outcome !== "approved") {
+    const ap = document.createElement("span");
+    ap.className = "badge prapproved";
+    ap.textContent = "already approved";
+    ap.title = "Someone has already approved this PR on GitHub";
+    head.appendChild(ap);
+  }
   if (rev.state === "done") {
-    // One slot, two things it can hold: the approval this review already posted,
-    // or the button to post one.
-    if (rev.outcome === "approved") {
-      // Not an action — the answer to "where did the Approve button go?". It
-      // also says something the review's own badge doesn't: the badge reports
-      // what this review decided, this reports that an approval is on the PR.
-      const b = document.createElement("button");
-      b.className = "approve";
-      b.disabled = true;
-      b.textContent = "Approved";
-      b.prepend(iconEl("check"));
-      b.title = "This PR is approved on GitHub";
-      head.appendChild(b);
-    } else if (rev.prApproved && rev.prState === "OPEN") {
-      // The same gap from the other side: this review didn't approve, somebody
-      // else did, and canApprovePr refuses to stack a second approval on top.
-      // Open PRs only — on a merged or closed one the chip above already
-      // accounts for the missing button.
-      const b = document.createElement("button");
-      b.className = "approve";
-      b.disabled = true;
-      b.textContent = "Already approved";
-      b.prepend(iconEl("check"));
-      b.title = "Someone has already approved this PR on GitHub";
-      head.appendChild(b);
-    } else if (canApprovePr(rev)) {
+    if (canApprovePr(rev)) {
       // Approve button. Rendered on anything still approvable (see canApprovePr)
       // even on a host that hasn't opted in, so the action is discoverable. When
       // the browser is locked it renders muted with a 🔒 and clicking it only
