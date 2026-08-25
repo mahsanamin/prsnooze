@@ -49,7 +49,7 @@ const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_R
 // identical to a wrong password: same prompt, same answer. A page your team can
 // reach shouldn't advertise whether approving is configured, and one path is one
 // path to get right.
-const APPROVE_PASSWORD = process.env.PRSNOOZE_APPROVE_PASSWORD || "";
+const APPROVE_PASSWORD = process.env.MANUAL_APPROVE_PASSWORD || "";
 
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.

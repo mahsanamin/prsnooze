@@ -31,7 +31,7 @@ process.env.PATH = `${bin}:${process.env.PATH}`;
 // Both before requiring the server: it reads the password at module load, and
 // hydrateJobs() must not touch ~/.prsnooze.
 process.env.PRSNOOZE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-home-"));
-process.env.PRSNOOZE_APPROVE_PASSWORD = PASSWORD;
+process.env.MANUAL_APPROVE_PASSWORD = PASSWORD;
 
 const { start, jobs } = require("../server");
 

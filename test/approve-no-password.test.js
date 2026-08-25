@@ -25,7 +25,7 @@ process.env.PATH = `${bin}:${process.env.PATH}`;
 process.env.PRSNOOZE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-home-"));
 // Present-but-empty: loadDotenv only fills keys that are absent, so this also
 // shields the test from whatever sits in the developer's own .env.
-process.env.PRSNOOZE_APPROVE_PASSWORD = "";
+process.env.MANUAL_APPROVE_PASSWORD = "";
 
 const { start, jobs } = require("../server");
 
