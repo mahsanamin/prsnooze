@@ -700,7 +700,12 @@ function attachWebSocket(srv) {
   return w;
 }
 
-function start(port = PORT) {
+// banner: print the config summary. Asked for explicitly by the two real entry
+// points (`node server.js` and bin/start.js) and left off everywhere else, which
+// in practice means the tests. It used to be gated on `require.main === module`
+// — but bin/start.js *requires* this file rather than running it, so `npm start`
+// (the way anyone actually starts prsnooze) printed no summary at all.
+function start(port = PORT, { banner = false } = {}) {
   // Restore past jobs from disk and reconcile anything left mid-flight by a
   // previous server that crashed or was restarted. Must run before we listen.
   hydrateJobs();
@@ -708,7 +713,7 @@ function start(port = PORT) {
   server.listen(port, "0.0.0.0", () => {
     const addr = server.address();
     console.log(`prsnooze listening on http://0.0.0.0:${addr.port}`);
-    if (require.main === module) {
+    if (banner) {
       console.log(`  data home: ${DATA_HOME}`);
       console.log(`  repos:     ${REPOS_DIR}`);
       console.log(`  worktrees: ${WORKTREES_DIR}`);
@@ -728,7 +733,7 @@ function start(port = PORT) {
   return server;
 }
 
-if (require.main === module) start();
+if (require.main === module) start(PORT, { banner: true });
 
 module.exports = { app, server, start, queue, jobs, jobsSnapshot, broadcastJobs };
 
