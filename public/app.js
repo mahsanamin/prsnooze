@@ -95,6 +95,9 @@ const ICON_PATHS = {
   play: '<path d="M7 4.5v15l12-7.5-12-7.5z"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.2 2"/>',
   check: '<path d="m4.5 12.5 5 5 10-11"/>',
+  // For the Approve action. Deliberately NOT the tick: a check on a button that
+  // hasn't been pressed yet reads as "this is approved" rather than "approve it".
+  thumbsup: '<path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/>',
   comment: '<path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.4-4.4A8 8 0 0 1 13 4a8 8 0 0 1 8 8z"/>',
   alert: '<path d="M12 4 2.5 20.5h19L12 4z"/><path d="M12 10v4.5"/><path d="M12 17.6v.01"/>',
   xcircle: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/>',
@@ -656,7 +659,7 @@ function renderHead(rev) {
       b.className = "approve";
       b.dataset.id = rev.id;
       if (hostLogin && rev.prMeta?.authorLogin && hostLogin === rev.prMeta.authorLogin) {
-        b.disabled = true; b.textContent = "Approve PR"; b.prepend(iconEl("check"));
+        b.disabled = true; b.textContent = "Approve PR"; b.prepend(iconEl("thumbsup"));
         b.title = `Can't approve your own PR (prsnooze approves as @${hostLogin})`;
       } else if (!unlocked) {
         b.classList.add("locked"); b.textContent = "Approve PR"; b.prepend(iconEl("lock"));
@@ -664,7 +667,7 @@ function renderHead(rev) {
           ? "Locked — click to enter the admin password"
           : "Approving isn't available on this prsnooze yet";
       } else {
-        b.textContent = "Approve PR"; b.prepend(iconEl("check"));
+        b.textContent = "Approve PR"; b.prepend(iconEl("thumbsup"));
       }
       head.appendChild(b);
     }
