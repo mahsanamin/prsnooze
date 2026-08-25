@@ -196,8 +196,6 @@ The button is always there and always live. Clicking it confirms what's about to
 
 Set `PRSNOOZE_APPROVE_PASSWORD` to the secret you want to share. It's only ever compared on the server. Anything that doesn't match comes back *not authorized* — and so does every attempt on a host that never set one, which is the same flow and the same message on purpose: the page your team can reach doesn't get to find out whether approving is configured. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30, since a shared password on a reachable page is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
 
-*(`PRSNOOZE_ADMIN_PASSWORD` was the old name for this and still works, but it'll say so at startup — approving isn't an admin area, it's one button with a password on it.)*
-
 ## When something goes wrong
 
 - **`gh pr view failed`** — run `gh auth status`. This is the most common one.

@@ -49,9 +49,7 @@ const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_R
 // identical to a wrong password: same prompt, same answer. A page your team can
 // reach shouldn't advertise whether approving is configured, and one path is one
 // path to get right.
-const APPROVE_PASSWORD = process.env.PRSNOOZE_APPROVE_PASSWORD || process.env.PRSNOOZE_ADMIN_PASSWORD || "";
-// Old name, still honoured so a host that set it doesn't silently lose approving.
-const APPROVE_PASSWORD_OLD_NAME = !process.env.PRSNOOZE_APPROVE_PASSWORD && !!process.env.PRSNOOZE_ADMIN_PASSWORD;
+const APPROVE_PASSWORD = process.env.PRSNOOZE_APPROVE_PASSWORD || "";
 
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
@@ -725,9 +723,6 @@ function start(port = PORT, { banner = false } = {}) {
       console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
       console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
       console.log(`  approve password: ${APPROVE_PASSWORD ? "set" : "not set — every approval comes back unauthorized"}`);
-      if (APPROVE_PASSWORD_OLD_NAME) {
-        console.log("  note: PRSNOOZE_ADMIN_PASSWORD still works, but it's now PRSNOOZE_APPROVE_PASSWORD");
-      }
     }
   });
   return server;
