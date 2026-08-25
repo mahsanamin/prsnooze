@@ -15,7 +15,7 @@ const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
 const { getUsage } = require("./lib/claude-usage");
 const { getModel } = require("./lib/claude-model");
-const { parsePrUrl, getSelfLogin, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -41,12 +41,15 @@ const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? 
 // How many reviews run at once. Default 1 = sequential (one at a time, no
 // concurrency). Set >1 to allow that many concurrent reviews.
 const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_REVIEWS || "1", 10));
-// Shared secret that gates privileged actions (approve). Set this on the host;
-// whoever knows it can unlock approve in their own browser. Unset = approve
-// disabled everywhere. Never sent to the client — only verified server-side.
-const ADMIN_PASSWORD = process.env.PRSNOOZE_ADMIN_PASSWORD || "";
-const PRIV_COOKIE = "prsnooze_priv";
-const PRIV_TTL_MS = 60 * 60 * 1000; // stay unlocked for 1 hour
+// The password that authorises approving a PR. Asked for on every approval —
+// there is no unlock step and nothing is remembered between clicks — and only
+// ever compared here; it never travels to the browser.
+//
+// Unset means no approval can be authorised, and the flow is deliberately
+// identical to a wrong password: same prompt, same answer. A page your team can
+// reach shouldn't advertise whether approving is configured, and one path is one
+// path to get right.
+const APPROVE_PASSWORD = process.env.MANUAL_APPROVE_PASSWORD || "";
 
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
@@ -195,52 +198,34 @@ app.get("/index.html", serveIndex);
 // index:false so the static handler doesn't serve the un-stamped index.html.
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
-// --- privileged-action gating (approve) -----------------------------------
-// A browser proves it knows PRSNOOZE_ADMIN_PASSWORD by POSTing it once to
-// /api/unlock; we hand back a signed, httpOnly cookie (a timestamp + HMAC, so
-// there is no server-side session to lose on restart). Every privileged
-// endpoint re-verifies that cookie independently. The raw password never
-// travels to the client and is never stored there after unlock.
-function signPriv(payload) {
-  return crypto.createHmac("sha256", ADMIN_PASSWORD).update(payload).digest("hex");
-}
-function makePrivToken() {
-  const issued = String(Date.now());
-  return `${issued}.${signPriv(issued)}`;
-}
-function verifyPrivToken(token) {
-  if (!ADMIN_PASSWORD || !token) return false;
-  const dot = token.lastIndexOf(".");
-  if (dot < 0) return false;
-  const payload = token.slice(0, dot);
-  const sig = token.slice(dot + 1);
-  const expected = signPriv(payload);
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  const issued = parseInt(payload, 10);
-  return Number.isFinite(issued) && Date.now() - issued < PRIV_TTL_MS;
-}
-function parseCookies(req) {
-  const out = {};
-  const raw = req.headers.cookie;
-  if (!raw) return out;
-  for (const part of raw.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
-  }
-  return out;
-}
-function isUnlocked(req) {
-  return verifyPrivToken(parseCookies(req)[PRIV_COOKIE]);
-}
-// Constant-time password check (hash both sides so length isn't leaked).
-function passwordMatches(input) {
-  if (!ADMIN_PASSWORD || !input) return false;
-  const a = crypto.createHash("sha256").update(String(input)).digest();
-  const b = crypto.createHash("sha256").update(ADMIN_PASSWORD).digest();
-  return crypto.timingSafeEqual(a, b);
+// --- authorising an approval ----------------------------------------------
+// There is no session, no cookie and no unlocked state: the password comes in
+// with the approval it authorises, is checked once, and is not kept. That's the
+// whole mechanism, and it's the reason nothing in the UI has to track it.
+//
+// Two things matter in the comparison: it must not leak by timing, and a guess
+// must not be cheap. It used to hash both sides with a bare SHA-256 — only ever
+// to get two equal-length buffers for timingSafeEqual, since comparing the raw
+// strings leaks the length — but a bare digest is fast, so a guess cost an
+// attacker nothing beyond the round trip and the throttle below was the only
+// thing slowing them down. That matters most in the case the throttle is weakest
+// at: behind a reverse proxy, where every request arrives from one IP.
+//
+// scrypt is deliberately expensive instead (tens of ms), which is nothing on a
+// click a human makes by hand and a real cost per guess. The salt is random per
+// process: nothing is stored, so it never has to survive a restart, and a fresh
+// one each boot means no digest here can be precomputed against.
+//
+// An unset password can't match anything — including an empty guess, which is
+// what the early return is for.
+const APPROVE_SALT = crypto.randomBytes(16);
+const scrypt = promisify(crypto.scrypt);
+let configuredHash = null; // computed once, on the first attempt
+async function passwordMatches(input) {
+  if (!APPROVE_PASSWORD || !input) return false;
+  if (!configuredHash) configuredHash = scrypt(APPROVE_PASSWORD, APPROVE_SALT, 32);
+  const [got, want] = await Promise.all([scrypt(String(input), APPROVE_SALT, 32), configuredHash]);
+  return crypto.timingSafeEqual(got, want);
 }
 function isLoopback(req) {
   const ip = req.socket.remoteAddress || "";
@@ -255,10 +240,9 @@ app.get("/api/config", (req, res) => {
     isHost: isLoopback(req),
     hostLogin: HOST_LOGIN,
     concurrent: MAX_CONCURRENT_REVIEWS > 1,
-    // Whether approve is gated at all (a password is set on the host), and
-    // whether THIS browser is currently unlocked.
-    passwordConfigured: !!ADMIN_PASSWORD,
-    unlocked: isUnlocked(req),
+    // Nothing about the approve password is reported. The button always shows
+    // and always asks, so the client has no state to sync — and whether a
+    // password is configured isn't the browser's business.
   });
 });
 
@@ -318,81 +302,54 @@ app.get("/api/model", async (_req, res) => {
   res.json(data);
 });
 
-// Prove knowledge of the admin password → set the privilege cookie.
 // --- brute-force protection for the one password-gated endpoint ------------
-// /api/unlock is the only place a secret is checked, and it gates posting an
-// approval to GitHub as the host. Without a limit, anyone who can reach the page
-// can try passwords as fast as the network allows — and the whole point of
-// prsnooze is that the page is reachable by teammates.
+// Approving is the only place a secret is checked, and it posts to GitHub as the
+// host. Without a limit, anyone who can reach the page can try passwords as fast
+// as the network allows — and the whole point of prsnooze is that the page is
+// reachable by teammates. Asking on every approval doesn't change that; it just
+// means the guess and the action arrive together.
 //
 // In-memory and per-IP: this is a single process on one machine, so there is no
 // shared store to coordinate with. Note that behind a reverse proxy every
 // request looks like it comes from the proxy unless `trust proxy` is set, in
 // which case a single attacker can lock the endpoint for everyone. That is the
 // deliberate trade: approve is a rare manual action, and the lockout expires.
-const UNLOCK_MAX_FAILS = 5;              // consecutive failures before locking
-const UNLOCK_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
-const UNLOCK_MAX_LOCK_MS = 30 * 60_000;  // ceiling
-const UNLOCK_FORGET_MS = 60 * 60_000;    // drop idle counters
-const unlockAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
+const APPROVE_MAX_FAILS = 5;              // consecutive failures before locking
+const APPROVE_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
+const APPROVE_MAX_LOCK_MS = 30 * 60_000;  // ceiling
+const APPROVE_FORGET_MS = 60 * 60_000;    // drop idle counters
+const approveAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
 
-function unlockThrottle(ip) {
+function approveThrottle(ip) {
   const now = Date.now();
   // Opportunistic prune so a stream of distinct IPs can't grow this forever.
-  if (unlockAttempts.size > 1000) {
-    for (const [k, v] of unlockAttempts) if (now - v.seen > UNLOCK_FORGET_MS) unlockAttempts.delete(k);
+  if (approveAttempts.size > 1000) {
+    for (const [k, v] of approveAttempts) if (now - v.seen > APPROVE_FORGET_MS) approveAttempts.delete(k);
   }
-  const rec = unlockAttempts.get(ip);
+  const rec = approveAttempts.get(ip);
   if (!rec) return { blocked: false };
-  if (now - rec.seen > UNLOCK_FORGET_MS) { unlockAttempts.delete(ip); return { blocked: false }; }
+  if (now - rec.seen > APPROVE_FORGET_MS) { approveAttempts.delete(ip); return { blocked: false }; }
   if (rec.lockedUntil && rec.lockedUntil > now) {
     return { blocked: true, retryAfterMs: rec.lockedUntil - now };
   }
   return { blocked: false };
 }
 
-function unlockFailed(ip) {
+function approveFailed(ip) {
   const now = Date.now();
-  const rec = unlockAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
+  const rec = approveAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
   rec.fails += 1;
   rec.seen = now;
-  if (rec.fails >= UNLOCK_MAX_FAILS) {
-    const over = rec.fails - UNLOCK_MAX_FAILS;
-    rec.lockedUntil = now + Math.min(UNLOCK_BASE_LOCK_MS * 2 ** over, UNLOCK_MAX_LOCK_MS);
+  if (rec.fails >= APPROVE_MAX_FAILS) {
+    const over = rec.fails - APPROVE_MAX_FAILS;
+    rec.lockedUntil = now + Math.min(APPROVE_BASE_LOCK_MS * 2 ** over, APPROVE_MAX_LOCK_MS);
   }
-  unlockAttempts.set(ip, rec);
+  approveAttempts.set(ip, rec);
 }
 
-function unlockSucceeded(ip) {
-  unlockAttempts.delete(ip);
+function approveSucceeded(ip) {
+  approveAttempts.delete(ip);
 }
-
-app.post("/api/unlock", (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(400).json({ error: "no admin password is configured on the host" });
-  const ip = req.ip || req.socket?.remoteAddress || "unknown";
-  const throttled = unlockThrottle(ip);
-  if (throttled.blocked) {
-    const secs = Math.ceil(throttled.retryAfterMs / 1000);
-    res.setHeader("Retry-After", String(secs));
-    return res.status(429).json({ error: `too many attempts — try again in ${secs}s`, retryAfterMs: throttled.retryAfterMs });
-  }
-  const { password } = req.body || {};
-  if (!passwordMatches(password)) {
-    unlockFailed(ip);
-    return res.status(401).json({ error: "incorrect password" });
-  }
-  unlockSucceeded(ip);
-  // No Secure flag: must also work over http://localhost. Over the proxy it's
-  // already HTTPS end-to-end.
-  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
-  res.json({ ok: true, ttlMs: PRIV_TTL_MS });
-});
-
-// Re-lock this browser immediately.
-app.post("/api/lock", (req, res) => {
-  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
-  res.json({ ok: true });
-});
 
 app.post("/api/review", (req, res) => {
   const { prUrl } = req.body || {};
@@ -511,6 +468,73 @@ async function assessJobResume(job) {
   return assessment;
 }
 
+// Read-only: is this PR still open, and has it already been approved? The
+// Approve button is drawn from this, so it deliberately does NOT reuse
+// resume-check — that answers a different question and returns nothing at all
+// for a review with no Claude session. Cached briefly: selecting a review asks,
+// and clicking between reviews shouldn't mean a `gh` call per click.
+//
+// Failures are cached too, for much less time. A logged-out or timing-out `gh`
+// is precisely the state where the client deliberately fails open and keeps the
+// Approve button clickable — so every click used to spawn another `gh pr view`
+// with a 20s timeout, from an endpoint that needs no password. A few seconds of
+// "still broken" is a good enough answer.
+const PR_STATE_TTL_MS = 30_000;
+const PR_STATE_FAIL_TTL_MS = 5_000;
+// How often a client may insist on a fresh probe for the same PR. The real
+// caller does it once, after an approval GitHub refused; anything faster than
+// this is a loop, and ?refresh=1 needs no password.
+const PR_STATE_REFRESH_FLOOR_MS = 3_000;
+const prStateCache = new Map();   // prUrl -> { at, ttl, value }
+const prStateForced = new Map();  // prUrl -> ts of the last honoured ?refresh=1
+const prStateInflight = new Map(); // prUrl -> in-flight probe
+
+// The cache is keyed by PR, not by browser, so anything that makes the stored
+// answer wrong has to drop it for everyone.
+function forgetPrState(prUrl) {
+  prStateCache.delete(prUrl || "");
+}
+
+// One `gh` per PR at a time. The cache alone doesn't give this: several clients
+// selecting the same review in the same second all miss it and all spawn their
+// own process, and a `gh` that ends in the 20s timeout leaves a long window for
+// that to happen in. Callers of a probe already running just wait for it.
+function probePrState(key, prUrl) {
+  const running = prStateInflight.get(key);
+  if (running) return running;
+  const probe = fetchPrState(prUrl) // never throws — see lib/github.js
+    .then((value) => {
+      if (prStateCache.size > 500) prStateCache.clear();
+      prStateCache.set(key, { at: Date.now(), ttl: value.ok ? PR_STATE_TTL_MS : PR_STATE_FAIL_TTL_MS, value });
+      return value;
+    })
+    .finally(() => prStateInflight.delete(key));
+  prStateInflight.set(key, probe);
+  return probe;
+}
+
+app.get("/api/jobs/:id/pr-state", async (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "not found" });
+  const key = job.prUrl || "";
+  const now = Date.now();
+  // ?refresh=1 is the client saying "the answer you gave me turned out to be
+  // wrong" — an approval GitHub refused, most often. Serving the cached entry
+  // there would hand back the exact state that was just disproved, and since
+  // the refusal lands seconds after the entry was written, that is the common
+  // path rather than the edge case. Rate-limited per PR so it can't be used to
+  // spend the host's processes: a second insistence inside the floor reads the
+  // entry the first one just refreshed, which is the answer it wanted anyway.
+  if (req.query.refresh === "1" && now - (prStateForced.get(key) || 0) >= PR_STATE_REFRESH_FLOOR_MS) {
+    if (prStateForced.size > 500) prStateForced.clear();
+    prStateForced.set(key, now);
+    forgetPrState(key);
+  }
+  const hit = prStateCache.get(key);
+  if (hit && now - hit.at < hit.ttl) return res.json(hit.value);
+  res.json(await probePrState(key, job.prUrl));
+});
+
 // Read-only: what would happen if you hit resume, and why.
 app.get("/api/jobs/:id/resume-check", async (req, res) => {
   const job = jobs.get(req.params.id);
@@ -576,13 +600,27 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   res.json({ ok: true });
 });
 
-// Approve the PR — password-gated. The browser can't run `gh`, so the server
-// shells out to it here, under the host's existing `gh` login (the same
-// identity every review posts under — no token/env var for gh). The caller
-// must hold a valid privilege cookie (see /api/unlock); otherwise 401.
+// Approve the PR. The browser can't run `gh`, so the server shells out to it
+// here, under the host's existing `gh` login (the same identity every review
+// posts under — no token/env var for gh).
+//
+// The password arrives with the request, every time. It's checked before the job
+// is even looked up, so an unauthorised caller can't use this endpoint to find
+// out which job ids exist, and a host with no password configured answers the
+// same way a wrong guess does.
 app.post("/api/jobs/:id/approve", async (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(403).json({ error: "approve is disabled — no admin password configured on the host" });
-  if (!isUnlocked(req)) return res.status(401).json({ error: "locked — enter the admin password to approve", locked: true });
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const throttled = approveThrottle(ip);
+  if (throttled.blocked) {
+    const secs = Math.ceil(throttled.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(secs));
+    return res.status(429).json({ error: `Too many attempts — try again in ${secs}s.`, retryAfterMs: throttled.retryAfterMs });
+  }
+  if (!(await passwordMatches((req.body || {}).password))) {
+    approveFailed(ip);
+    return res.status(401).json({ error: "Not authorized — that password doesn't match." });
+  }
+  approveSucceeded(ip);
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   if (!job.prUrl) return res.status(400).json({ error: "no PR URL on this job" });
@@ -597,6 +635,10 @@ app.post("/api/jobs/:id/approve", async (req, res) => {
     job.events.push({ ts: Date.now(), kind: "outcome_detected", outcome: "approved" });
     job.events.push({ ts: Date.now(), kind: "log", message: `Approved by @${HOST_LOGIN || "host"} via prsnooze.` });
     persistJob(job);
+    // The PR is now approved, so the cached "open, unapproved" answer is stale
+    // for every browser watching it, not just this one. Drop it so nobody else
+    // is offered an Approve button that can only fail.
+    forgetPrState(job.prUrl);
     res.json({ ok: true, outcome: "approved" });
   } catch (e) {
     const detail = (e.stderr || e.message || "").toString().trim().split("\n").slice(-3).join(" ");
@@ -671,7 +713,12 @@ function attachWebSocket(srv) {
   return w;
 }
 
-function start(port = PORT) {
+// banner: print the config summary. Asked for explicitly by the two real entry
+// points (`node server.js` and bin/start.js) and left off everywhere else, which
+// in practice means the tests. It used to be gated on `require.main === module`
+// — but bin/start.js *requires* this file rather than running it, so `npm start`
+// (the way anyone actually starts prsnooze) printed no summary at all.
+function start(port = PORT, { banner = false } = {}) {
   // Restore past jobs from disk and reconcile anything left mid-flight by a
   // previous server that crashed or was restarted. Must run before we listen.
   hydrateJobs();
@@ -679,7 +726,7 @@ function start(port = PORT) {
   server.listen(port, "0.0.0.0", () => {
     const addr = server.address();
     console.log(`prsnooze listening on http://0.0.0.0:${addr.port}`);
-    if (require.main === module) {
+    if (banner) {
       console.log(`  data home: ${DATA_HOME}`);
       console.log(`  repos:     ${REPOS_DIR}`);
       console.log(`  worktrees: ${WORKTREES_DIR}`);
@@ -690,12 +737,13 @@ function start(port = PORT) {
       console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
       console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
       console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
+      console.log(`  approve password: ${APPROVE_PASSWORD ? "set" : "not set — every approval comes back unauthorized"}`);
     }
   });
   return server;
 }
 
-if (require.main === module) start();
+if (require.main === module) start(PORT, { banner: true });
 
 module.exports = { app, server, start, queue, jobs, jobsSnapshot, broadcastJobs };
 

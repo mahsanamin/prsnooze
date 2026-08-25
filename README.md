@@ -182,7 +182,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `MAX_CONCURRENT_REVIEWS` | `1` | Reviews at once. Extra submissions queue. |
 | `CONFIDENCE_THRESHOLD` | `80` | Drop findings below this confidence. `0` = show everything. |
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
-| `PRSNOOZE_ADMIN_PASSWORD` | *unset* | Enables the manual **Approve PR** button (see below). |
+| `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). |
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
 | `CLAUDE_BIN` | `claude` | Path to the claude CLI, if it isn't on `PATH`. |
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | Keep the checkout after a successful review (for debugging). |
@@ -192,7 +192,9 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 
 Risky or large PRs come back as *commented* on purpose — the merge decision stays with a human. On any finished review there's an **Approve PR** button, gated by a shared password so it works over a proxy as well as on localhost.
 
-Set `PRSNOOZE_ADMIN_PASSWORD` to switch it on (leave it unset and approving is disabled entirely). The password is only ever checked on the server; unlocking sets a signed one-hour cookie per browser. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30 — a shared password on a page your team can reach is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
+The button is always there and always live. Clicking it confirms what's about to happen, then asks for the password — **every time**. There is no unlocking, nothing is armed, and nothing is remembered: no cookie, no session, no browser you have to remember to re-lock before you walk away from it.
+
+Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever compared on the server. Anything that doesn't match comes back *not authorized* — and so does every attempt on a host that never set one, which is the same flow and the same message on purpose: the page your team can reach doesn't get to find out whether approving is configured. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30, since a shared password on a reachable page is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
 
 ## When something goes wrong
 
