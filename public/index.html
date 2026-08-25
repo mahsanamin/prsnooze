@@ -57,17 +57,6 @@
             <div id="usage-foot" class="usage-foot"></div>
           </div>
         </div>
-        <!-- Re-lock, and nothing else. Hidden unless this browser is actually
-             unlocked, so the header doesn't carry a permanent lock readout —
-             the Approve button already says whether it's armed. Shared browser,
-             done approving: click this instead of waiting out the hour.
-             See relock() / setUnlocked() in app.js. -->
-        <button id="lock-btn" class="lockchip" type="button" title="Re-lock approving in this browser" hidden>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="4.5" y="10.5" width="15" height="10" rx="2" /><path d="M8.2 10.5V7.2a3.8 3.8 0 0 1 7.6 0v3.3" />
-          </svg>
-          Lock
-        </button>
         <!-- One control for "tell me when a review finishes": the chime AND the
              desktop notification. It replaced a volume toggle sitting next to a
              separate emoji that only reported browser permission state — two
@@ -166,36 +155,45 @@
 
     <div id="toast" class="toast" hidden></div>
 
-    <div id="unlock-backdrop" class="unlock-backdrop" hidden>
-      <form id="unlock-modal" class="unlock-modal">
-        <div class="unlock-title">
+    <!-- Asked on every approval. There is no unlock step and nothing is kept:
+         the password travels with the click that uses it and the field is
+         cleared on the way out. See openPassword() in app.js. -->
+    <div id="pw-backdrop" class="modal-backdrop" hidden>
+      <form id="pw-form" class="modal-card">
+        <div class="modal-title">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <rect x="4" y="10.5" width="16" height="10.5" rx="2" /><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
           </svg>
-          Enter admin password
+          Password to approve
         </div>
-        <div class="unlock-sub">Set by whoever runs prsnooze. Unlocks privileged actions in this browser.</div>
-        <div class="unlock-field">
-          <input id="unlock-pass" type="password" placeholder="Admin password" autocomplete="current-password" />
-          <button id="unlock-eye" type="button" class="unlock-eye" title="Show/hide" aria-label="Show or hide password">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <div class="modal-sub">Set by whoever runs prsnooze. Asked every time — nothing is stored in this browser.</div>
+        <div class="modal-field">
+          <input id="pw-input" type="password" placeholder="Approve password" autocomplete="current-password" />
+          <!-- Two glyphs, one shown at a time via .showing on the button. Not
+               the hidden attribute: it does nothing on an <svg>, and the old
+               version overwrote this button's icon with an emoji instead. -->
+          <button id="pw-eye" type="button" class="modal-eye" title="Show password" aria-label="Show or hide password">
+            <svg class="eye-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
               <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" />
+            </svg>
+            <svg class="eye-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" /><path d="M4 20 20 4" />
             </svg>
           </button>
         </div>
-        <div id="unlock-err" class="unlock-err" hidden></div>
-        <div class="unlock-actions">
-          <button id="unlock-cancel" type="button" class="unlock-cancel">Cancel</button>
-          <button id="unlock-submit" type="submit" class="unlock-submit">Unlock</button>
+        <div id="pw-err" class="modal-err" hidden></div>
+        <div class="modal-actions">
+          <button id="pw-cancel" type="button" class="modal-cancel">Cancel</button>
+          <button id="pw-submit" type="submit" class="confirm-ok">Approve PR</button>
         </div>
       </form>
     </div>
 
-    <!-- Approving posts to a real PR under the host's GitHub identity, so the
-         click is confirmed before it goes out. Same shell as the unlock modal. -->
-    <div id="confirm-backdrop" class="unlock-backdrop" hidden>
-      <div id="confirm-modal" class="unlock-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-        <div id="confirm-title" class="unlock-title">
+    <!-- Step one of two. Approving posts to a real PR under the host's GitHub
+         identity, so it's confirmed before the password is even asked for. -->
+    <div id="confirm-backdrop" class="modal-backdrop" hidden>
+      <div id="confirm-modal" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div id="confirm-title" class="modal-title">
           <!-- Thumbs-up, not a tick: the dialog is asking, so a check would be
                answering its own question. Matches the Approve button. -->
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -203,9 +201,9 @@
           </svg>
           Approve this PR?
         </div>
-        <div id="confirm-sub" class="unlock-sub"></div>
-        <div class="unlock-actions">
-          <button id="confirm-cancel" type="button" class="unlock-cancel">Cancel</button>
+        <div id="confirm-sub" class="modal-sub"></div>
+        <div class="modal-actions">
+          <button id="confirm-cancel" type="button" class="modal-cancel">Cancel</button>
           <button id="confirm-ok" type="button" class="confirm-ok">Yes, approve</button>
         </div>
       </div>

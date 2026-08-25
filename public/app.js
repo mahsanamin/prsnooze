@@ -37,17 +37,17 @@ const usagePop = $("usage-pop");
 const usageRows = $("usage-rows");
 const usageMonth = $("usage-month");
 const usageFoot = $("usage-foot");
-const unlockBackdrop = $("unlock-backdrop");
-const unlockForm = $("unlock-modal");
-const unlockPass = $("unlock-pass");
-const unlockEye = $("unlock-eye");
-const unlockErr = $("unlock-err");
-const unlockCancel = $("unlock-cancel");
+const pwBackdrop = $("pw-backdrop");
+const pwForm = $("pw-form");
+const pwInput = $("pw-input");
+const pwEye = $("pw-eye");
+const pwErr = $("pw-err");
+const pwCancel = $("pw-cancel");
+const pwSubmit = $("pw-submit");
 const confirmBackdrop = $("confirm-backdrop");
 const confirmSub = $("confirm-sub");
 const confirmOk = $("confirm-ok");
 const confirmCancel = $("confirm-cancel");
-const lockBtn = $("lock-btn");
 
 const LS_SELECTED = "prsnooze:selected";
 // Same key as the old sound toggle, so nobody's existing preference resets.
@@ -74,10 +74,10 @@ let hostName = "";
 let isHost = false;
 let hostLogin = null;
 let welcomeShown = false;
-let passwordConfigured = false;
-let unlocked = false;
-let relockTimer = null;
-let confirmingApprove = null; // id of the PR the confirm dialog is asking about
+// The id the approve dialogs are about. That is the entire amount of state the
+// approve flow keeps, and it lives only between clicking the button and the
+// password landing — there is no unlocked-browser state to arm or expire.
+let pendingApprove = null;
 // "Tell me when a review finishes" — one flag for the chime and the desktop
 // notification. Declared here with the rest of the module state: playChime() and
 // the toggle's own handler are defined above the init block and both read it.
@@ -109,7 +109,6 @@ const ICON_PATHS = {
   moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>',
   wrench: '<path d="M14.5 6.2a3.8 3.8 0 0 1 5.2 5.2l-2.4-2.4-2.8 2.8-2.4-2.4 2.8-2.8-.4-.4z"/><path d="m12.3 11.5-7.2 7.2a1.8 1.8 0 0 0 2.5 2.5l7.2-7.2"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
-  lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8.2 10.5V7.2a3.8 3.8 0 0 1 7.6 0v3.3"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.5h-4.5"/>',
   branch: '<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M6.5 8.5v7"/><path d="M15 9.6a5.5 5.5 0 0 1-5.4 4.5"/>',
   diff: '<path d="M6 3.5v17"/><path d="M3.5 6h5"/><path d="M18 20.5v-17"/><path d="M15.5 18h5"/>',
@@ -649,25 +648,19 @@ function renderHead(rev) {
   }
   if (rev.state === "done") {
     if (canApprovePr(rev)) {
-      // Approve button. Rendered on anything still approvable (see canApprovePr)
-      // even on a host that hasn't opted in, so the action is discoverable. When
-      // the browser is locked it renders muted with a 🔒 and clicking it only
-      // opens the password prompt — unlocking never approves anything by itself.
-      // Unlocked, a click asks for confirmation first. The server approves under
-      // its own gh identity, so a self-authored PR is refused.
+      // One shape, always the same: on any approvable review, the button is
+      // there and it's live. It has nothing to report about whether this browser
+      // is allowed to approve, because that is settled per click — clicking asks
+      // for confirmation and then the password, every time. The only variant is
+      // a PR the host wrote, which GitHub would refuse anyway.
       const b = document.createElement("button");
       b.className = "approve";
       b.dataset.id = rev.id;
+      b.textContent = "Approve PR";
+      b.prepend(iconEl("thumbsup"));
       if (hostLogin && rev.prMeta?.authorLogin && hostLogin === rev.prMeta.authorLogin) {
-        b.disabled = true; b.textContent = "Approve PR"; b.prepend(iconEl("thumbsup"));
+        b.disabled = true;
         b.title = `Can't approve your own PR (prsnooze approves as @${hostLogin})`;
-      } else if (!unlocked) {
-        b.classList.add("locked"); b.textContent = "Approve PR"; b.prepend(iconEl("lock"));
-        b.title = passwordConfigured
-          ? "Locked — click to enter the admin password"
-          : "Approving isn't available on this prsnooze yet";
-      } else {
-        b.textContent = "Approve PR"; b.prepend(iconEl("thumbsup"));
       }
       head.appendChild(b);
     }
@@ -1019,13 +1012,7 @@ function finish(rev, state) {
 // --------------------------------------------------- delegated panel clicks -
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
-  if (ap && ap.dataset.id && !ap.disabled) {
-    // Locked → the password prompt, and nothing more: unlocking is its own
-    // step, so a correct password leaves you with an armed button, not a
-    // posted approval. Unlocked → confirm, then approve.
-    if (!unlocked) { openUnlock(); return; }
-    openConfirm(ap.dataset.id); return;
-  }
+  if (ap && ap.dataset.id && !ap.disabled) { openConfirm(ap.dataset.id); return; }
   const fr = e.target.closest(".resume.force");
   if (fr && fr.dataset.forceId && !fr.disabled) { verifyReview(fr.dataset.forceId, true); return; }
   const rs = e.target.closest(".resume");
@@ -1038,110 +1025,18 @@ panels.addEventListener("click", (e) => {
   }
 });
 
-async function approveReview(id, btn) {
-  const rev = reviews.get(id);
-  if (!rev) return;
-  if (btn) { btn.disabled = true; btn.textContent = "Approving…"; }
-  try {
-    // Server runs `gh pr review --approve` under the host's own gh login,
-    // gated on the privilege cookie (see /api/jobs/:id/approve). The password
-    // is never in the browser; the cookie proves this browser unlocked.
-    const r = await fetch(`/api/jobs/${id}/approve`, { method: "POST" });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      // Cookie expired / never set → re-prompt for the password. Unlocking
-      // doesn't resume the approve; posting one is always its own click.
-      if (r.status === 401 || data.locked) {
-        // Through setUnlocked, not a bare assignment: it owns the Lock control
-        // and the relock timer, and leaving those behind means a chip reading
-        // "unlocked" over a locked browser, then an hour-later toast about a
-        // re-lock that already happened.
-        setUnlocked(false);
-        showToast("🔒 That unlock expired — enter the password again.");
-        openUnlock();
-        return;
-      }
-      showToast("Couldn't approve: " + escapeHtml(data.error || `HTTP ${r.status}`));
-      // GitHub refusing an approval usually means the PR moved under us — merged,
-      // closed, or approved by someone else. Re-ask, so the button and the chip
-      // settle on the truth instead of inviting another failing click.
-      loadPrState(rev, { force: true });
-      renderHead(rev);
-      return;
-    }
-    rev.outcome = "approved";
-    renderHead(rev); renderSummary(rev); renderLists();
-    showToast("✓ Approved on GitHub.");
-  } catch (e) {
-    showToast("Couldn't approve: " + escapeHtml(e.message));
-    renderHead(rev);
-  }
-}
+// ------------------------------------------- approve: confirm, then password -
+// Approving writes to somebody else's PR under the host's GitHub account, so it
+// takes two deliberate steps, every time: confirm what is about to happen, then
+// prove you're allowed to do it. Nothing survives the click — no unlocked
+// browser, no cookie, no timer, nothing to leave armed behind you on a shared
+// machine. The password travels with the approval it authorises and the field is
+// cleared on the way out.
 
-// --------------------------------------------------------- privilege / lock -
-// There is no standing lock indicator in the header: the Approve button carries
-// the state — muted with a 🔒 when locked, green when armed — so the lock is
-// only mentioned where it actually blocks something. The one thing the button
-// can't express is "I'm done approving", so a Lock control appears next to it
-// while unlocked, and only while unlocked. On a shared browser that beats
-// waiting out the hour.
-function setUnlocked(on) {
-  unlocked = on;
-  if (lockBtn) lockBtn.hidden = !on;
-  for (const r of reviews.values()) if (r.els?.head) renderHead(r);
-  clearTimeout(relockTimer);
-  if (on) relockTimer = setTimeout(() => { setUnlocked(false); showToast("🔒 Re-locked after 1 hour."); }, 60 * 60 * 1000);
-}
-// Clear the privilege cookie now. The client flag drops either way: the cookie's
-// own issued-at is what the server trusts, so a flag that ran ahead of a failed
-// request costs at most a 401 and a fresh password prompt.
-async function relock() {
-  try { await fetch("/api/lock", { method: "POST" }); } catch {}
-  setUnlocked(false);
-  showToast("🔒 Locked. Approving needs the password again.");
-}
-function openUnlock() {
-  if (!passwordConfigured) { showToast("Approving isn't available yet — ask whoever runs this prsnooze to turn it on."); return; }
-  unlockErr.hidden = true; unlockPass.value = "";
-  unlockPass.type = "password"; if (unlockEye) unlockEye.textContent = "👁";
-  unlockBackdrop.hidden = false;
-  setTimeout(() => unlockPass.focus(), 30);
-}
-function closeUnlock() { unlockBackdrop.hidden = true; }
-async function submitUnlock() {
-  const password = unlockPass.value;
-  if (!password) { unlockErr.textContent = "Enter the password."; unlockErr.hidden = false; return; }
-  try {
-    const r = await fetch("/api/unlock", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      unlockErr.textContent = data.error === "incorrect password" ? "Incorrect password." : (data.error || "Couldn't unlock.");
-      unlockErr.hidden = false;
-      unlockForm.classList.remove("shake"); void unlockForm.offsetWidth; unlockForm.classList.add("shake");
-      return;
-    }
-    unlockPass.value = "";
-    unlockBackdrop.hidden = true;
-    setUnlocked(true);
-    showToast("🔓 Unlocked for 1 hour — Approve PR is now armed.");
-  } catch (e) {
-    unlockErr.textContent = "Couldn't reach the server."; unlockErr.hidden = false;
-  }
-}
-
-if (lockBtn) lockBtn.addEventListener("click", relock);
-
-// ------------------------------------------------------- approve confirmation -
-// Unlocking arms the button; this is the step that actually posts. Approving
-// writes to someone else's PR under the host's GitHub account, which is not
-// something a stray click should be able to do.
 function openConfirm(id) {
   const rev = reviews.get(id);
   if (!rev) return;
-  confirmingApprove = id;
+  pendingApprove = id;
   const num = rev.prMeta?.number || prNumberFromUrl(rev.prUrl);
   const where = rev.prMeta?.nameWithOwner ? `${rev.prMeta.nameWithOwner}#${num}` : (num ? `PR #${num}` : "this PR");
   confirmSub.textContent = hostLogin
@@ -1152,31 +1047,109 @@ function openConfirm(id) {
   confirmBackdrop.hidden = false;
   setTimeout(() => confirmOk.focus(), 30);
 }
-function closeConfirm() { confirmBackdrop.hidden = true; confirmingApprove = null; }
+// keep:true hands the pending id on to the password step; cancelling drops it.
+function closeConfirm({ keep = false } = {}) {
+  confirmBackdrop.hidden = true;
+  if (!keep) pendingApprove = null;
+}
+
+function openPassword() {
+  pwErr.hidden = true;
+  pwInput.value = "";
+  setPwVisible(false);
+  pwSubmit.disabled = false;
+  pwSubmit.textContent = "Approve PR";
+  pwBackdrop.hidden = false;
+  setTimeout(() => pwInput.focus(), 30);
+}
+function closePassword() {
+  pwBackdrop.hidden = true;
+  pwInput.value = ""; // don't leave the secret sitting in the DOM
+  pendingApprove = null;
+}
+// A refusal keeps the dialog open: the password is the thing that failed, so the
+// message belongs beside the field you'd retype, not in a toast over the page.
+function pwFail(message) {
+  pwErr.textContent = message;
+  pwErr.hidden = false;
+  pwForm.classList.remove("shake"); void pwForm.offsetWidth; pwForm.classList.add("shake");
+  pwInput.select();
+}
+function setPwVisible(show) {
+  pwInput.type = show ? "text" : "password";
+  if (!pwEye) return;
+  pwEye.classList.toggle("showing", show);
+  pwEye.title = show ? "Hide password" : "Show password";
+}
+
+async function approveReview(id, password) {
+  const rev = reviews.get(id);
+  if (!rev) return;
+  pwErr.hidden = true;
+  pwSubmit.disabled = true;
+  pwSubmit.textContent = "Approving…";
+  try {
+    // The server checks the password and runs `gh pr review --approve` under the
+    // host's own gh login. Nothing is remembered on either side afterwards.
+    const r = await fetch(`/api/jobs/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      // Wrong password, or too many tries — both are answers about the password,
+      // and the server words them (it says the same thing whether the guess was
+      // wrong or the host never set one). Stay put so it can be retyped.
+      if (r.status === 401 || r.status === 429) {
+        pwFail(data.error || "Not authorized.");
+        return;
+      }
+      // Anything else is about the PR, not the password.
+      closePassword();
+      showToast("Couldn't approve: " + escapeHtml(data.error || `HTTP ${r.status}`));
+      // GitHub refusing an approval usually means the PR moved under us — merged,
+      // closed, or approved by someone else. Re-ask, so the button and the chip
+      // settle on the truth instead of inviting another failing click.
+      loadPrState(rev, { force: true });
+      renderHead(rev);
+      return;
+    }
+    closePassword();
+    rev.outcome = "approved";
+    renderHead(rev); renderSummary(rev); renderLists();
+    showToast("✓ Approved on GitHub.");
+  } catch (e) {
+    pwFail("Couldn't reach the server.");
+  } finally {
+    pwSubmit.disabled = false;
+    pwSubmit.textContent = "Approve PR";
+  }
+}
+
 if (confirmOk) confirmOk.addEventListener("click", () => {
-  const id = confirmingApprove;
-  if (!id) return closeConfirm();
-  confirmOk.disabled = true;
-  closeConfirm();
-  const btn = document.querySelector(`.review-panel.active .approve[data-id="${id}"]`);
-  approveReview(id, btn || null);
+  const id = pendingApprove;
+  closeConfirm({ keep: true });
+  if (id) openPassword(); else closePassword();
 });
-if (confirmCancel) confirmCancel.addEventListener("click", closeConfirm);
+if (confirmCancel) confirmCancel.addEventListener("click", () => closeConfirm());
 if (confirmBackdrop) confirmBackdrop.addEventListener("click", (e) => { if (e.target === confirmBackdrop) closeConfirm(); });
 
-if (unlockForm) unlockForm.addEventListener("submit", (e) => { e.preventDefault(); submitUnlock(); });
-if (unlockCancel) unlockCancel.addEventListener("click", closeUnlock);
-if (unlockEye) unlockEye.addEventListener("click", () => {
-  const show = unlockPass.type === "password";
-  unlockPass.type = show ? "text" : "password";
-  unlockEye.textContent = show ? "🙈" : "👁";
-  unlockPass.focus();
+if (pwForm) pwForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = pendingApprove;
+  if (!id) { closePassword(); return; }
+  if (!pwInput.value) { pwFail("Enter the password."); return; }
+  approveReview(id, pwInput.value);
 });
-if (unlockBackdrop) unlockBackdrop.addEventListener("click", (e) => { if (e.target === unlockBackdrop) closeUnlock(); });
+if (pwCancel) pwCancel.addEventListener("click", closePassword);
+if (pwBackdrop) pwBackdrop.addEventListener("click", (e) => { if (e.target === pwBackdrop) closePassword(); });
+if (pwEye) pwEye.addEventListener("click", () => { setPwVisible(pwInput.type === "password"); pwInput.focus(); });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  // Innermost first: the password step sits on top of the confirmation.
+  if (pwBackdrop && !pwBackdrop.hidden) { closePassword(); return; }
   if (confirmBackdrop && !confirmBackdrop.hidden) { closeConfirm(); return; }
-  if (!unlockBackdrop.hidden) closeUnlock();
 });
 
 // ----------------------------------------------------------- active model ---
@@ -1801,7 +1774,6 @@ async function loadConfig() {
     if (cfg.heroImage) document.body.style.setProperty("--hero", `url("${cfg.heroImage}")`);
     isHost = !!cfg.isHost;
     hostLogin = cfg.hostLogin || null;
-    passwordConfigured = !!cfg.passwordConfigured;
     if (cfg.host) {
       hostName = cfg.host;
       hostNameEl.textContent = `on ${hostName}'s machine`;
@@ -1810,9 +1782,6 @@ async function loadConfig() {
     // The usage chip names the host and has a host-only fallback state, so it
     // can only render properly once the config has landed.
     renderUsage();
-    // setUnlocked, not a bare assignment: it's the only writer of `unlocked`,
-    // so the Lock control and the relock timer can't drift out of step with it.
-    setUnlocked(!!cfg.unlocked); // also (re)arms the client-side relock timer
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
     updateStatusLight();
   } catch {}

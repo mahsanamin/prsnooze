@@ -431,36 +431,32 @@ body::after {
   .usagechip.loading .usage-fill { animation: none !important; }
 }
 
-/* privilege lock chip + unlock prompt */
-/* Only on screen while this browser is unlocked, so it reads as the action it
-   is ("lock now") rather than a status light. Green, matching the armed Approve
-   button it's there to disarm. */
-.lockchip { display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; font-weight: 600; padding: 4px 11px; border-radius: 999px; cursor: pointer; color: var(--green); border: 1px solid rgba(82, 223, 160, 0.4); background: rgba(82, 223, 160, 0.1); }
-.lockchip:hover { color: var(--text); border-color: var(--accent); }
-.lockchip[hidden] { display: none; }
-.approve.locked { background: var(--panel-2); color: var(--muted); border: 1px dashed var(--border-2); box-shadow: none; }
-.approve.locked:hover { color: var(--text); border-color: var(--accent); }
-.unlock-backdrop { position: fixed; inset: 0; background: rgba(5, 6, 14, 0.66); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.unlock-backdrop[hidden] { display: none; }
-.unlock-modal { width: min(92vw, 380px); background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--border-2); border-radius: 16px; padding: 22px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
-.unlock-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--text); }
-.unlock-sub { font-size: 12.5px; color: var(--muted); margin: 6px 0 16px; line-height: 1.5; }
-.unlock-field { position: relative; display: flex; align-items: center; }
-.unlock-field input { flex: 1; padding: 10px 40px 10px 12px; border-radius: 10px; border: 1px solid var(--border-2); background: rgba(8, 9, 13, 0.6); color: var(--text); font-size: 14px; }
-.unlock-field input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
-.unlock-eye { position: absolute; right: 6px; display: flex; align-items: center; background: none; border: none; cursor: pointer; color: var(--faint); padding: 5px; border-radius: 6px; }
-.unlock-eye:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
-.unlock-err { color: var(--red); font-size: 12.5px; margin-top: 8px; }
-.unlock-err[hidden] { display: none; }
-.unlock-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.unlock-cancel { background: none; border: 1px solid var(--border-2); color: var(--muted); padding: 8px 14px; border-radius: 9px; cursor: pointer; font-size: 13px; }
-.unlock-cancel:hover { color: var(--text); border-color: var(--faint); }
-.unlock-submit { background: linear-gradient(180deg, #ffc072, var(--accent)); color: var(--accent-ink); border: none; font-weight: 700; padding: 8px 17px; border-radius: 9px; cursor: pointer; font-size: 13px; }
-.unlock-submit:hover { filter: brightness(1.06); }
+/* Dialog shell, shared by the approve confirmation and the password prompt.
+   Named for what it is rather than for unlocking: there is nothing to unlock. */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(5, 6, 14, 0.66); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-backdrop[hidden] { display: none; }
+.modal-card { width: min(92vw, 380px); background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--border-2); border-radius: 16px; padding: 22px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
+.modal-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--text); }
+.modal-sub { font-size: 12.5px; color: var(--muted); margin: 6px 0 16px; line-height: 1.5; }
+.modal-field { position: relative; display: flex; align-items: center; }
+.modal-field input { flex: 1; padding: 10px 40px 10px 12px; border-radius: 10px; border: 1px solid var(--border-2); background: rgba(8, 9, 13, 0.6); color: var(--text); font-size: 14px; }
+.modal-field input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.modal-eye { position: absolute; right: 6px; display: flex; align-items: center; background: none; border: none; cursor: pointer; color: var(--faint); padding: 5px; border-radius: 6px; }
+.modal-eye:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+/* The hidden attribute can't do this: the UA rule behind it only applies to HTML
+   elements, so an <svg hidden> stays on screen. */
+.modal-eye .eye-off { display: none; }
+.modal-eye.showing .eye-on { display: none; }
+.modal-eye.showing .eye-off { display: block; }
+.modal-err { color: var(--red); font-size: 12.5px; margin-top: 8px; }
+.modal-err[hidden] { display: none; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-cancel { background: none; border: 1px solid var(--border-2); color: var(--muted); padding: 8px 14px; border-radius: 9px; cursor: pointer; font-size: 13px; }
+.modal-cancel:hover { color: var(--text); border-color: var(--faint); }
 .confirm-ok { background: linear-gradient(180deg, #6ee7b0, var(--green)); color: #04291a; border: none; font-weight: 700; padding: 8px 17px; border-radius: 9px; cursor: pointer; font-size: 13px; }
 .confirm-ok:hover:not(:disabled) { filter: brightness(1.06); }
 .confirm-ok:disabled { opacity: 0.55; cursor: default; }
-.unlock-modal.shake { animation: shake 0.35s; }
+.modal-card.shake { animation: shake 0.35s; }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
 
 /* --------------------------------------------------- welcome-back banner -- */

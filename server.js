@@ -41,12 +41,17 @@ const SKIP_IF_ALREADY_REVIEWED = String(process.env.SKIP_IF_ALREADY_REVIEWED ?? 
 // How many reviews run at once. Default 1 = sequential (one at a time, no
 // concurrency). Set >1 to allow that many concurrent reviews.
 const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_REVIEWS || "1", 10));
-// Shared secret that gates privileged actions (approve). Set this on the host;
-// whoever knows it can unlock approve in their own browser. Unset = approve
-// disabled everywhere. Never sent to the client — only verified server-side.
-const ADMIN_PASSWORD = process.env.PRSNOOZE_ADMIN_PASSWORD || "";
-const PRIV_COOKIE = "prsnooze_priv";
-const PRIV_TTL_MS = 60 * 60 * 1000; // stay unlocked for 1 hour
+// The password that authorises approving a PR. Asked for on every approval —
+// there is no unlock step and nothing is remembered between clicks — and only
+// ever compared here; it never travels to the browser.
+//
+// Unset means no approval can be authorised, and the flow is deliberately
+// identical to a wrong password: same prompt, same answer. A page your team can
+// reach shouldn't advertise whether approving is configured, and one path is one
+// path to get right.
+const APPROVE_PASSWORD = process.env.PRSNOOZE_APPROVE_PASSWORD || process.env.PRSNOOZE_ADMIN_PASSWORD || "";
+// Old name, still honoured so a host that set it doesn't silently lose approving.
+const APPROVE_PASSWORD_OLD_NAME = !process.env.PRSNOOZE_APPROVE_PASSWORD && !!process.env.PRSNOOZE_ADMIN_PASSWORD;
 
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
@@ -195,51 +200,18 @@ app.get("/index.html", serveIndex);
 // index:false so the static handler doesn't serve the un-stamped index.html.
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
-// --- privileged-action gating (approve) -----------------------------------
-// A browser proves it knows PRSNOOZE_ADMIN_PASSWORD by POSTing it once to
-// /api/unlock; we hand back a signed, httpOnly cookie (a timestamp + HMAC, so
-// there is no server-side session to lose on restart). Every privileged
-// endpoint re-verifies that cookie independently. The raw password never
-// travels to the client and is never stored there after unlock.
-function signPriv(payload) {
-  return crypto.createHmac("sha256", ADMIN_PASSWORD).update(payload).digest("hex");
-}
-function makePrivToken() {
-  const issued = String(Date.now());
-  return `${issued}.${signPriv(issued)}`;
-}
-function verifyPrivToken(token) {
-  if (!ADMIN_PASSWORD || !token) return false;
-  const dot = token.lastIndexOf(".");
-  if (dot < 0) return false;
-  const payload = token.slice(0, dot);
-  const sig = token.slice(dot + 1);
-  const expected = signPriv(payload);
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  const issued = parseInt(payload, 10);
-  return Number.isFinite(issued) && Date.now() - issued < PRIV_TTL_MS;
-}
-function parseCookies(req) {
-  const out = {};
-  const raw = req.headers.cookie;
-  if (!raw) return out;
-  for (const part of raw.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
-  }
-  return out;
-}
-function isUnlocked(req) {
-  return verifyPrivToken(parseCookies(req)[PRIV_COOKIE]);
-}
-// Constant-time password check (hash both sides so length isn't leaked).
+// --- authorising an approval ----------------------------------------------
+// There is no session, no cookie and no unlocked state: the password comes in
+// with the approval it authorises, is checked once, and is not kept. That's the
+// whole mechanism, and it's the reason nothing in the UI has to track it.
+//
+// Constant-time comparison, hashing both sides so the length isn't leaked
+// either. An unset password can't match anything, which is exactly what should
+// happen when the host hasn't configured one.
 function passwordMatches(input) {
-  if (!ADMIN_PASSWORD || !input) return false;
+  if (!APPROVE_PASSWORD || !input) return false;
   const a = crypto.createHash("sha256").update(String(input)).digest();
-  const b = crypto.createHash("sha256").update(ADMIN_PASSWORD).digest();
+  const b = crypto.createHash("sha256").update(APPROVE_PASSWORD).digest();
   return crypto.timingSafeEqual(a, b);
 }
 function isLoopback(req) {
@@ -255,10 +227,9 @@ app.get("/api/config", (req, res) => {
     isHost: isLoopback(req),
     hostLogin: HOST_LOGIN,
     concurrent: MAX_CONCURRENT_REVIEWS > 1,
-    // Whether approve is gated at all (a password is set on the host), and
-    // whether THIS browser is currently unlocked.
-    passwordConfigured: !!ADMIN_PASSWORD,
-    unlocked: isUnlocked(req),
+    // Nothing about the approve password is reported. The button always shows
+    // and always asks, so the client has no state to sync — and whether a
+    // password is configured isn't the browser's business.
   });
 });
 
@@ -318,81 +289,54 @@ app.get("/api/model", async (_req, res) => {
   res.json(data);
 });
 
-// Prove knowledge of the admin password → set the privilege cookie.
 // --- brute-force protection for the one password-gated endpoint ------------
-// /api/unlock is the only place a secret is checked, and it gates posting an
-// approval to GitHub as the host. Without a limit, anyone who can reach the page
-// can try passwords as fast as the network allows — and the whole point of
-// prsnooze is that the page is reachable by teammates.
+// Approving is the only place a secret is checked, and it posts to GitHub as the
+// host. Without a limit, anyone who can reach the page can try passwords as fast
+// as the network allows — and the whole point of prsnooze is that the page is
+// reachable by teammates. Asking on every approval doesn't change that; it just
+// means the guess and the action arrive together.
 //
 // In-memory and per-IP: this is a single process on one machine, so there is no
 // shared store to coordinate with. Note that behind a reverse proxy every
 // request looks like it comes from the proxy unless `trust proxy` is set, in
 // which case a single attacker can lock the endpoint for everyone. That is the
 // deliberate trade: approve is a rare manual action, and the lockout expires.
-const UNLOCK_MAX_FAILS = 5;              // consecutive failures before locking
-const UNLOCK_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
-const UNLOCK_MAX_LOCK_MS = 30 * 60_000;  // ceiling
-const UNLOCK_FORGET_MS = 60 * 60_000;    // drop idle counters
-const unlockAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
+const APPROVE_MAX_FAILS = 5;              // consecutive failures before locking
+const APPROVE_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
+const APPROVE_MAX_LOCK_MS = 30 * 60_000;  // ceiling
+const APPROVE_FORGET_MS = 60 * 60_000;    // drop idle counters
+const approveAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
 
-function unlockThrottle(ip) {
+function approveThrottle(ip) {
   const now = Date.now();
   // Opportunistic prune so a stream of distinct IPs can't grow this forever.
-  if (unlockAttempts.size > 1000) {
-    for (const [k, v] of unlockAttempts) if (now - v.seen > UNLOCK_FORGET_MS) unlockAttempts.delete(k);
+  if (approveAttempts.size > 1000) {
+    for (const [k, v] of approveAttempts) if (now - v.seen > APPROVE_FORGET_MS) approveAttempts.delete(k);
   }
-  const rec = unlockAttempts.get(ip);
+  const rec = approveAttempts.get(ip);
   if (!rec) return { blocked: false };
-  if (now - rec.seen > UNLOCK_FORGET_MS) { unlockAttempts.delete(ip); return { blocked: false }; }
+  if (now - rec.seen > APPROVE_FORGET_MS) { approveAttempts.delete(ip); return { blocked: false }; }
   if (rec.lockedUntil && rec.lockedUntil > now) {
     return { blocked: true, retryAfterMs: rec.lockedUntil - now };
   }
   return { blocked: false };
 }
 
-function unlockFailed(ip) {
+function approveFailed(ip) {
   const now = Date.now();
-  const rec = unlockAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
+  const rec = approveAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
   rec.fails += 1;
   rec.seen = now;
-  if (rec.fails >= UNLOCK_MAX_FAILS) {
-    const over = rec.fails - UNLOCK_MAX_FAILS;
-    rec.lockedUntil = now + Math.min(UNLOCK_BASE_LOCK_MS * 2 ** over, UNLOCK_MAX_LOCK_MS);
+  if (rec.fails >= APPROVE_MAX_FAILS) {
+    const over = rec.fails - APPROVE_MAX_FAILS;
+    rec.lockedUntil = now + Math.min(APPROVE_BASE_LOCK_MS * 2 ** over, APPROVE_MAX_LOCK_MS);
   }
-  unlockAttempts.set(ip, rec);
+  approveAttempts.set(ip, rec);
 }
 
-function unlockSucceeded(ip) {
-  unlockAttempts.delete(ip);
+function approveSucceeded(ip) {
+  approveAttempts.delete(ip);
 }
-
-app.post("/api/unlock", (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(400).json({ error: "approving isn't available on this prsnooze yet" });
-  const ip = req.ip || req.socket?.remoteAddress || "unknown";
-  const throttled = unlockThrottle(ip);
-  if (throttled.blocked) {
-    const secs = Math.ceil(throttled.retryAfterMs / 1000);
-    res.setHeader("Retry-After", String(secs));
-    return res.status(429).json({ error: `too many attempts — try again in ${secs}s`, retryAfterMs: throttled.retryAfterMs });
-  }
-  const { password } = req.body || {};
-  if (!passwordMatches(password)) {
-    unlockFailed(ip);
-    return res.status(401).json({ error: "incorrect password" });
-  }
-  unlockSucceeded(ip);
-  // No Secure flag: must also work over http://localhost. Over the proxy it's
-  // already HTTPS end-to-end.
-  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=${makePrivToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PRIV_TTL_MS / 1000}`);
-  res.json({ ok: true, ttlMs: PRIV_TTL_MS });
-});
-
-// Re-lock this browser immediately.
-app.post("/api/lock", (req, res) => {
-  res.setHeader("Set-Cookie", `${PRIV_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
-  res.json({ ok: true });
-});
 
 app.post("/api/review", (req, res) => {
   const { prUrl } = req.body || {};
@@ -643,13 +587,27 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   res.json({ ok: true });
 });
 
-// Approve the PR — password-gated. The browser can't run `gh`, so the server
-// shells out to it here, under the host's existing `gh` login (the same
-// identity every review posts under — no token/env var for gh). The caller
-// must hold a valid privilege cookie (see /api/unlock); otherwise 401.
+// Approve the PR. The browser can't run `gh`, so the server shells out to it
+// here, under the host's existing `gh` login (the same identity every review
+// posts under — no token/env var for gh).
+//
+// The password arrives with the request, every time. It's checked before the job
+// is even looked up, so an unauthorised caller can't use this endpoint to find
+// out which job ids exist, and a host with no password configured answers the
+// same way a wrong guess does.
 app.post("/api/jobs/:id/approve", async (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(403).json({ error: "approving isn't available on this prsnooze yet" });
-  if (!isUnlocked(req)) return res.status(401).json({ error: "locked — enter the admin password to approve", locked: true });
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const throttled = approveThrottle(ip);
+  if (throttled.blocked) {
+    const secs = Math.ceil(throttled.retryAfterMs / 1000);
+    res.setHeader("Retry-After", String(secs));
+    return res.status(429).json({ error: `Too many attempts — try again in ${secs}s.`, retryAfterMs: throttled.retryAfterMs });
+  }
+  if (!passwordMatches((req.body || {}).password)) {
+    approveFailed(ip);
+    return res.status(401).json({ error: "Not authorized — that password doesn't match." });
+  }
+  approveSucceeded(ip);
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   if (!job.prUrl) return res.status(400).json({ error: "no PR URL on this job" });
@@ -761,6 +719,10 @@ function start(port = PORT) {
       console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
       console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
       console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
+      console.log(`  approve password: ${APPROVE_PASSWORD ? "set" : "not set — every approval comes back unauthorized"}`);
+      if (APPROVE_PASSWORD_OLD_NAME) {
+        console.log("  note: PRSNOOZE_ADMIN_PASSWORD still works, but it's now PRSNOOZE_APPROVE_PASSWORD");
+      }
     }
   });
   return server;
