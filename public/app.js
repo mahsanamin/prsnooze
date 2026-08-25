@@ -887,7 +887,7 @@ function renderPeek(rev) {
 async function loadFinishedLog(rev) {
   rev.panelLoaded = true;
   try {
-    const r = await fetch(`/api/jobs/${rev.id}`);
+    const r = await fetch(`/api/jobs/${encodeURIComponent(rev.id)}`);
     if (!r.ok) return;
     const job = await r.json();
     if (job.prMeta) rev.prMeta = job.prMeta;
@@ -918,7 +918,7 @@ function openStream(rev) {
   // re-run, the whole original review). Render it, but don't let a replayed
   // "done" re-fire chimes/notifications — the caught_up sentinel ends replay.
   rev.replaying = true;
-  const es = new EventSource(`/api/jobs/${rev.id}/events`);
+  const es = new EventSource(`/api/jobs/${encodeURIComponent(rev.id)}/events`);
   rev.es = es;
   es.onmessage = (msg) => { let ev; try { ev = JSON.parse(msg.data); } catch { return; } handleEvent(rev, ev); };
   // No refetch on error: EventSource auto-reconnects, and the job list is kept
@@ -1091,7 +1091,7 @@ async function approveReview(id, password) {
   try {
     // The server checks the password and runs `gh pr review --approve` under the
     // host's own gh login. Nothing is remembered on either side afterwards.
-    const r = await fetch(`/api/jobs/${id}/approve`, {
+    const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/approve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
@@ -1350,7 +1350,7 @@ async function verifyReview(id, force = false) {
   if (!rev) return;
   showToast("Resuming the review — picking up the original session…");
   try {
-    const r = await fetch(`/api/jobs/${id}/verify`, {
+    const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ force: !!force }),
@@ -1399,7 +1399,7 @@ async function loadPrState(rev, { force = false } = {}) {
     // force means "what you told me turned out to be wrong", so it has to get
     // past the server's own 30s cache as well as the prStateChecked guard above
     // — otherwise a refused approval is handed back the state it just disproved.
-    const r = await fetch(`/api/jobs/${rev.id}/pr-state${force ? "?refresh=1" : ""}`);
+    const r = await fetch(`/api/jobs/${encodeURIComponent(rev.id)}/pr-state${force ? "?refresh=1" : ""}`);
     const data = r.ok ? await r.json() : { ok: false };
     rev.prStateOk = !!data.ok;
     rev.prState = String(data.state || "").toUpperCase() || null;
@@ -1423,7 +1423,7 @@ async function loadResumeCheck(rev) {
   if (!rev || rev.resumeLoading) return;
   rev.resumeLoading = true;
   try {
-    const r = await fetch(`/api/jobs/${rev.id}/resume-check`);
+    const r = await fetch(`/api/jobs/${encodeURIComponent(rev.id)}/resume-check`);
     if (r.ok) rev.resume = await r.json();
   } catch {
     rev.resume = null;
@@ -1651,6 +1651,11 @@ function applySnapshot(data) {
   renderQueueStatus(data.queue);
   maybeShowWelcome(data.jobs || []);
   if (!selectedId) {
+    // A shared link picks the review. Note where this value ends up: the id goes
+    // into the path of every per-job request, so it is only ever used after
+    // reviews.has() confirms the server actually sent us that job, and it's
+    // percent-encoded at each of those call sites. Neither alone is enough —
+    // a link is something someone else can hand you.
     const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
     const saved = fromHash || localStorage.getItem(LS_SELECTED);
     if (saved && reviews.has(saved)) selectReview(saved);

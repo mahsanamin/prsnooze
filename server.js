@@ -203,14 +203,29 @@ app.use(express.static(PUBLIC_DIR, { index: false }));
 // with the approval it authorises, is checked once, and is not kept. That's the
 // whole mechanism, and it's the reason nothing in the UI has to track it.
 //
-// Constant-time comparison, hashing both sides so the length isn't leaked
-// either. An unset password can't match anything, which is exactly what should
-// happen when the host hasn't configured one.
-function passwordMatches(input) {
+// Two things matter in the comparison: it must not leak by timing, and a guess
+// must not be cheap. It used to hash both sides with a bare SHA-256 — only ever
+// to get two equal-length buffers for timingSafeEqual, since comparing the raw
+// strings leaks the length — but a bare digest is fast, so a guess cost an
+// attacker nothing beyond the round trip and the throttle below was the only
+// thing slowing them down. That matters most in the case the throttle is weakest
+// at: behind a reverse proxy, where every request arrives from one IP.
+//
+// scrypt is deliberately expensive instead (tens of ms), which is nothing on a
+// click a human makes by hand and a real cost per guess. The salt is random per
+// process: nothing is stored, so it never has to survive a restart, and a fresh
+// one each boot means no digest here can be precomputed against.
+//
+// An unset password can't match anything — including an empty guess, which is
+// what the early return is for.
+const APPROVE_SALT = crypto.randomBytes(16);
+const scrypt = promisify(crypto.scrypt);
+let configuredHash = null; // computed once, on the first attempt
+async function passwordMatches(input) {
   if (!APPROVE_PASSWORD || !input) return false;
-  const a = crypto.createHash("sha256").update(String(input)).digest();
-  const b = crypto.createHash("sha256").update(APPROVE_PASSWORD).digest();
-  return crypto.timingSafeEqual(a, b);
+  if (!configuredHash) configuredHash = scrypt(APPROVE_PASSWORD, APPROVE_SALT, 32);
+  const [got, want] = await Promise.all([scrypt(String(input), APPROVE_SALT, 32), configuredHash]);
+  return crypto.timingSafeEqual(got, want);
 }
 function isLoopback(req) {
   const ip = req.socket.remoteAddress || "";
@@ -601,7 +616,7 @@ app.post("/api/jobs/:id/approve", async (req, res) => {
     res.setHeader("Retry-After", String(secs));
     return res.status(429).json({ error: `Too many attempts — try again in ${secs}s.`, retryAfterMs: throttled.retryAfterMs });
   }
-  if (!passwordMatches((req.body || {}).password)) {
+  if (!(await passwordMatches((req.body || {}).password))) {
     approveFailed(ip);
     return res.status(401).json({ error: "Not authorized — that password doesn't match." });
   }
