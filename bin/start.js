@@ -52,38 +52,54 @@ const args = new Set(process.argv.slice(2));
 const FLAG_HELP = args.has("-h") || args.has("--help");
 const FLAG_CHECK = args.has("--check");
 const FLAG_NO_CHECK = args.has("--no-check");
+// Run the checks, report what failed, start anyway. This is what the
+// background and supervised starts use (bin/prsnooze-service, launchd,
+// systemd): at boot there is nobody reading the terminal, and refusing to
+// start over a check that needs the network would leave the team with no
+// prsnooze until someone noticed.
+const FLAG_CHECK_WARN = args.has("--check-warn");
 
 if (FLAG_HELP) {
-  console.log(`Usage: npm start [-- --check | --no-check]
+  console.log(`Usage: npm start [-- --check | --check-warn | --no-check]
 
   (no args)     Run preflight checks and start the server.
   --check       Run preflight checks only and exit (don't start server).
+  --check-warn  Run preflight checks, report failures, start anyway.
   --no-check    Skip preflight checks and start anyway.
   -h, --help    Show this help.
+
+To keep it running in the background, and after a reboot, use
+bin/prsnooze-service instead (start / stop / restart / status / install).
 `);
   process.exit(0);
 }
 
 (async () => {
   banner();
+  await ensureEnvFile();
+  if (!FLAG_CHECK) await guardSecondInstance();
   warning();
 
   if (!FLAG_NO_CHECK) {
     const ok = await runPreflight();
-    if (!ok) {
+    if (!ok && !FLAG_CHECK_WARN) {
       console.log(
         `\n${c.red}${c.bold}preflight failed.${c.reset} Fix the issues above, then re-run.\n` +
           `${c.dim}You can also run \`npm start -- --no-check\` to skip these checks (not recommended).${c.reset}\n`,
       );
       process.exit(1);
     }
+    if (!ok) {
+      console.log(
+        `\n${c.yellow}${c.bold}preflight failed, starting anyway${c.reset} ${c.dim}(--check-warn).${c.reset}\n` +
+          `${c.dim}Reviews that need the failing piece will fail until it's fixed.${c.reset}\n`,
+      );
+    }
     if (FLAG_CHECK) {
       console.log(`\n${c.green}all checks passed.${c.reset}\n`);
       process.exit(0);
     }
   }
-
-  await ensureEnvFile();
 
   console.log(`\n${c.bold}starting server${c.reset}\n`);
   // Hand off to server.js in this process so signals (Ctrl-C) work as expected.
@@ -96,6 +112,39 @@ if (FLAG_HELP) {
   console.error(`${c.red}startup error:${c.reset}`, e);
   process.exit(1);
 });
+
+// ---------- one server at a time ----------
+
+// prsnooze can be started four ways (this script in a terminal, the same script
+// detached, launchd, systemd) and any of them can be run on top of a server
+// that is already up. Binding twice fails with a raw EADDRINUSE stack trace,
+// which reads like a broken install rather than "it's already working". So ask
+// the port first, and turn the two answers into plain instructions.
+async function guardSecondInstance() {
+  const { probe, resolvePort } = require(path.join(ROOT, "lib", "instance.js"));
+  const port = resolvePort({ root: ROOT });
+  const found = await probe(port);
+
+  if (found.state === "prsnooze") {
+    console.log(
+      `${c.green}${c.bold}prsnooze is already running${c.reset} at ${c.bold}${found.url}${c.reset}` +
+        `${found.host ? ` ${c.dim}(host: ${found.host})${c.reset}` : ""}\n\n` +
+        `  Nothing was started, and the one already running was left alone.\n` +
+        `  ${c.dim}To bounce it:  bin/prsnooze-service restart${c.reset}\n` +
+        `  ${c.dim}To stop it:    bin/prsnooze-service stop${c.reset}\n`,
+    );
+    process.exit(0);
+  }
+
+  if (found.state === "foreign") {
+    console.log(
+      `${c.red}${c.bold}port ${port} is already taken${c.reset} by something that isn't prsnooze` +
+        `${found.reason ? ` ${c.dim}(${found.reason})${c.reset}` : ""}.\n\n` +
+        `  Free that port, or set a different ${c.bold}PORT${c.reset} in ${c.dim}.env${c.reset}, then start again.\n`,
+    );
+    process.exit(1);
+  }
+}
 
 // ---------- preflight ----------
 

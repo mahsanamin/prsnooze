@@ -1,0 +1,535 @@
+#!/usr/bin/env bash
+# prsnooze-service: keep prsnooze running, in the background now and again
+# after the machine reboots.
+#
+# `npm start` runs the server in your terminal, which is perfect while you're
+# setting it up and useless the moment the terminal closes or the machine
+# restarts. This script is the other half: it starts prsnooze detached, hands it
+# to the OS supervisor (launchd on macOS, systemd on Linux) so it comes back by
+# itself, and makes every command safe to run twice.
+#
+# Safe to run twice is the point. `start` on a server that is already up prints
+# where it is and exits 0. It never binds a second time, never kills the first
+# one, and never leaves you with two servers reviewing the same PR.
+#
+#   start      start it if it isn't already running (no-op if it is)
+#   stop       stop it, whichever way it was started
+#   restart    stop then start (what to run after editing .env)
+#   status     is it up, where, and what is supervising it
+#   logs       tail the log (-f to follow)
+#   install    have the OS start it at login/boot and restart it if it dies
+#   uninstall  remove that, leaving the server running
+#
+# Docker users don't need any of this: docker-compose.yml already says
+# `restart: unless-stopped`, so `bin/docker-server start` survives reboots on
+# its own as long as Docker itself starts with the machine.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+LABEL="com.prsnooze.server"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+UNIT_NAME="prsnooze.service"
+UNIT="$HOME/.config/systemd/user/$UNIT_NAME"
+
+STATE_DIR="${PRSNOOZE_HOME:-$HOME/.prsnooze}"
+RUN_DIR="$STATE_DIR/run"
+PID_FILE="$RUN_DIR/prsnooze.pid"
+LOG_FILE="$STATE_DIR/logs/server.log"
+LOG_MAX_BYTES=$((10 * 1024 * 1024))
+
+# Colour when a person is watching; plain text when the output is being piped
+# into a log or read by a script, which is most of the time for a service.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  ORG=$'\033[38;5;208m'; RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'
+  DIM=$'\033[2m'; BOLD=$'\033[1m'; RST=$'\033[0m'
+else
+  ORG=""; RED=""; GRN=""; YEL=""; DIM=""; BOLD=""; RST=""
+fi
+
+NODE_BIN="$(command -v node || true)"
+if [ -z "$NODE_BIN" ]; then
+  printf '%snode not found on PATH.%s prsnooze needs Node.js 20+.\n' "$RED" "$RST" >&2
+  exit 1
+fi
+
+PORT_RESOLVED="$("$NODE_BIN" "$ROOT/lib/instance.js" --port)"
+URL="http://localhost:$PORT_RESOLVED"
+
+case "$(uname -s)" in
+  Darwin) OS=macos ;;
+  Linux)  OS=linux ;;
+  *)      OS=other ;;
+esac
+
+# ---------------------------------------------------------------- state ------
+
+# free | prsnooze | foreign, as defined in lib/instance.js. This is the only source of
+# truth for "is it running": PID files lie after a crash, and the server can be
+# started four different ways, but the port answers the same way for all of them.
+instance_state() {
+  "$NODE_BIN" "$ROOT/lib/instance.js" "$PORT_RESOLVED" 2>/dev/null || true
+}
+
+is_running() { [ "$(instance_state)" = "prsnooze" ]; }
+
+# Which supervisor owns it, if any. Installed-but-not-running still counts as
+# managed: that's the whole reason `start` must go through the supervisor rather
+# than spawning its own copy the supervisor doesn't know about.
+supervisor() {
+  if [ "$OS" = macos ] && [ -f "$PLIST" ]; then echo launchd; return; fi
+  if [ "$OS" = linux ] && [ -f "$UNIT" ]; then echo systemd; return; fi
+  echo none
+}
+
+# The PID listening on our port, by whatever tool this machine has.
+port_pid() {
+  local pid=""
+  if command -v lsof >/dev/null 2>&1; then
+    pid="$(lsof -ti "tcp:$PORT_RESOLVED" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+  fi
+  if [ -z "$pid" ] && command -v ss >/dev/null 2>&1; then
+    pid="$(ss -lptnH "sport = :$PORT_RESOLVED" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)"
+  fi
+  if [ -z "$pid" ] && command -v fuser >/dev/null 2>&1; then
+    pid="$(fuser -n tcp "$PORT_RESOLVED" 2>/dev/null | tr -s ' ' '\n' | head -1 || true)"
+  fi
+  # Every one of those tools has a version that prints something other than a
+  # bare number when it finds nothing. Only a number is a pid.
+  case "$pid" in
+    ''|*[!0-9]*) pid="" ;;
+  esac
+  printf '%s' "$pid"
+}
+
+alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+
+# --------------------------------------------------------------- starting ----
+
+rotate_log() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  [ -f "$LOG_FILE" ] || return 0
+  local size
+  size="$(wc -c <"$LOG_FILE" | tr -d ' ')"
+  [ "$size" -gt "$LOG_MAX_BYTES" ] && mv -f "$LOG_FILE" "$LOG_FILE.1"
+  return 0
+}
+
+# Start detached, without a supervisor. Used when nothing is installed. It
+# survives closing the terminal, but not a reboot. `install` is the answer to
+# reboots, and start_detached says so once it's up.
+start_detached() {
+  mkdir -p "$RUN_DIR"
+  # --check-warn: run the preflight checks and log what fails, but start
+  # anyway. A background start has nobody to read a failure, and half the
+  # checks (ssh to GitHub, in particular) are network-dependent enough to fail
+  # transiently, and refusing to start over one would be worse than starting.
+  nohup "$NODE_BIN" "$ROOT/bin/start.js" --check-warn >>"$LOG_FILE" 2>&1 &
+  echo $! >"$PID_FILE"
+  wait_until_up || {
+    printf '%sit did not come up.%s last lines of %s:\n\n' "$RED" "$RST" "$LOG_FILE" >&2
+    tail -20 "$LOG_FILE" >&2 || true
+    return 1
+  }
+}
+
+wait_until_up() {
+  local tries=${1:-40}
+  local i=0
+  while [ "$i" -lt "$tries" ]; do
+    is_running && return 0
+    sleep 0.5
+    i=$((i + 1))
+  done
+  return 1
+}
+
+wait_until_down() {
+  local tries=${1:-40}
+  local i=0
+  while [ "$i" -lt "$tries" ]; do
+    is_running || return 0
+    sleep 0.5
+    i=$((i + 1))
+  done
+  return 1
+}
+
+cmd_start() {
+  if is_running; then
+    printf '%salready running%s at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
+    printf '%s(nothing started; use `bin/prsnooze-service restart` to bounce it)%s\n' "$DIM" "$RST"
+    print_supervision_hint
+    return 0
+  fi
+
+  local state
+  state="$(instance_state)"
+  if [ "$state" = foreign ]; then
+    printf '%sport %s is taken by something that is not prsnooze.%s\n' "$RED" "$PORT_RESOLVED" "$RST" >&2
+    printf 'Free it, or set a different PORT in .env, then try again.\n' >&2
+    return 1
+  fi
+
+  # Every start is a chance to keep the log from growing forever; launchd and
+  # systemd both just append to whatever is already there.
+  rotate_log
+
+  case "$(supervisor)" in
+    launchd)
+      launchctl kickstart "gui/$UID/$LABEL" >/dev/null 2>&1 || launchctl bootstrap "gui/$UID" "$PLIST"
+      wait_until_up || { printf '%slaunchd did not bring it up.%s check: %s\n' "$RED" "$RST" "$LOG_FILE" >&2; return 1; }
+      printf '%sstarted%s (launchd) at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
+      ;;
+    systemd)
+      systemctl --user start "$UNIT_NAME"
+      wait_until_up || { printf '%ssystemd did not bring it up.%s check: journalctl --user -u %s\n' "$RED" "$RST" "$UNIT_NAME" >&2; return 1; }
+      printf '%sstarted%s (systemd) at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
+      ;;
+    *)
+      start_detached || return 1
+      printf '%sstarted%s at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
+      printf '%slogs: %s%s\n' "$DIM" "$LOG_FILE" "$RST"
+      print_supervision_hint
+      ;;
+  esac
+}
+
+print_supervision_hint() {
+  [ "$(supervisor)" = none ] || return 0
+  printf '%sthis dies with the machine. `bin/prsnooze-service install` makes it come back by itself.%s\n' "$YEL" "$RST"
+}
+
+# --------------------------------------------------------------- stopping ----
+
+cmd_stop() {
+  local sup
+  sup="$(supervisor)"
+
+  if ! is_running && [ "$sup" = none ]; then
+    printf '%snot running.%s\n' "$DIM" "$RST"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+
+  case "$sup" in
+    launchd) launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true ;;
+    systemd) systemctl --user stop "$UNIT_NAME" >/dev/null 2>&1 || true ;;
+  esac
+
+  # Also handle a copy started by hand (nohup, or a plain `npm start` in some
+  # other terminal): the supervisor knows nothing about those, and leaving one
+  # holding the port would make the next `start` report a phantom success.
+  local pid=""
+  [ -f "$PID_FILE" ] && pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  alive "$pid" || pid="$(port_pid)"
+
+  if alive "$pid"; then
+    # SIGTERM, not SIGKILL: server.js traps it, aborts running reviews and
+    # kills their child claude processes. A -9 here leaves those orphaned.
+    kill -TERM "$pid" 2>/dev/null || true
+    wait_until_down 30 || {
+      printf '%sit did not stop in 15s, sending SIGKILL.%s\n' "$YEL" "$RST" >&2
+      kill -KILL "$pid" 2>/dev/null || true
+    }
+  fi
+
+  rm -f "$PID_FILE"
+  if is_running; then
+    printf '%sstill answering on %s.%s something else is holding that port.\n' "$RED" "$URL" "$RST" >&2
+    return 1
+  fi
+  printf '%sstopped.%s\n' "$GRN" "$RST"
+}
+
+# ---------------------------------------------------------------- status -----
+
+cmd_status() {
+  local sup state
+  sup="$(supervisor)"
+  state="$(instance_state)"
+
+  printf '\n%s%s  👀 prsnooze%s\n\n' "$ORG" "$BOLD" "$RST"
+  case "$state" in
+    prsnooze) printf '  %srunning%s   %s\n' "$GRN" "$RST" "$URL" ;;
+    free)     printf '  %sstopped%s   nothing listening on port %s\n' "$RED" "$RST" "$PORT_RESOLVED" ;;
+    foreign)  printf '  %sport busy%s port %s is taken by something else\n' "$YEL" "$RST" "$PORT_RESOLVED" ;;
+  esac
+
+  case "$sup" in
+    launchd) printf '  supervisor launchd (%s)\n' "$LABEL" ;;
+    systemd) printf '  supervisor systemd --user (%s)\n' "$UNIT_NAME" ;;
+    none)    printf '  supervisor %snone (it will not come back after a reboot)%s\n' "$YEL" "$RST" ;;
+  esac
+
+  local pid
+  pid="$(port_pid)"
+  [ -n "$pid" ] && printf '  pid        %s\n' "$pid"
+  printf '  logs       %s\n' "$(log_target)"
+  printf '  data       %s\n\n' "$STATE_DIR"
+
+  [ "$state" = prsnooze ]
+}
+
+log_target() {
+  if [ "$(supervisor)" = systemd ]; then
+    printf 'journalctl --user -u %s' "$UNIT_NAME"
+  else
+    printf '%s' "$LOG_FILE"
+  fi
+}
+
+cmd_logs() {
+  local follow=""
+  if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then follow=1; fi
+  if [ "$(supervisor)" = systemd ]; then
+    if [ -n "$follow" ]; then journalctl --user -u "$UNIT_NAME" -f; else journalctl --user -u "$UNIT_NAME" -n 200 --no-pager; fi
+    return
+  fi
+  if [ ! -f "$LOG_FILE" ]; then
+    printf '%sno log yet at %s%s\n' "$DIM" "$LOG_FILE" "$RST"
+    return 0
+  fi
+  if [ -n "$follow" ]; then tail -f "$LOG_FILE"; else tail -n 200 "$LOG_FILE"; fi
+}
+
+# --------------------------------------------------------------- install -----
+
+xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+# A service does not inherit the shell you installed from, so anything set only
+# in your shell profile would silently not apply. .env is the place for config,
+# and the server reads it either way. Two are worth carrying over from the
+# install-time environment anyway, because they are the two this script itself
+# resolves: PORT (or the manager would look for the server on a different port
+# than it runs on) and PRSNOOZE_HOME (or the service points at a different data
+# directory, and every review already written looks lost).
+CARRIED_ENV="PORT PRSNOOZE_HOME"
+
+extra_env_plist() {
+  local name value
+  for name in $CARRIED_ENV; do
+    eval "value=\${$name:-}"
+    [ -n "$value" ] || continue
+    printf '    <key>%s</key><string>%s</string>\n' "$name" "$(printf '%s' "$value" | xml_escape)"
+  done
+}
+
+extra_env_systemd() {
+  local name value
+  for name in $CARRIED_ENV; do
+    eval "value=\${$name:-}"
+    [ -n "$value" ] || continue
+    printf 'Environment=%s=%s\n' "$name" "$value"
+  done
+}
+
+cmd_install() {
+  # Check the setup once, here, where a person is watching. The service itself
+  # starts with --check-warn (log and continue), because a boot-time failure on
+  # a transient network check should not leave the machine with no prsnooze.
+  if [ "${1:-}" != "--force" ]; then
+    printf '%schecking your setup before installing%s\n\n' "$BOLD" "$RST"
+    if ! "$NODE_BIN" "$ROOT/bin/start.js" --check; then
+      printf '\n%snot installing.%s Fix the above, or re-run with `install --force`.\n' "$RED" "$RST" >&2
+      return 1
+    fi
+  fi
+
+  case "$OS" in
+    macos) install_launchd ;;
+    linux) install_systemd ;;
+    *)
+      printf '%sno supervisor for this OS (%s).%s Use `start` and keep the machine awake.\n' "$RED" "$(uname -s)" "$RST" >&2
+      return 1
+      ;;
+  esac
+}
+
+install_launchd() {
+  # A hand-started copy would fight launchd for the port. Stand it down first.
+  if is_running; then
+    printf '%sstopping the copy that is already running, so launchd can own it%s\n' "$DIM" "$RST"
+    cmd_stop >/dev/null || true
+  fi
+
+  rotate_log
+  mkdir -p "$(dirname "$PLIST")"
+  local path_esc node_esc root_esc
+  path_esc="$(printf '%s' "$PATH" | xml_escape)"
+  node_esc="$(printf '%s' "$NODE_BIN" | xml_escape)"
+  root_esc="$(printf '%s' "$ROOT" | xml_escape)"
+
+  cat >"$PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$node_esc</string>
+    <string>$root_esc/bin/start.js</string>
+    <string>--check-warn</string>
+  </array>
+  <key>WorkingDirectory</key><string>$root_esc</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- Don't respawn faster than this if it's crash-looping. -->
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$(printf '%s' "$LOG_FILE" | xml_escape)</string>
+  <key>StandardErrorPath</key><string>$(printf '%s' "$LOG_FILE" | xml_escape)</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd starts with a bare PATH; claude, gh and git have to be findable
+         or every review fails at the first shell-out. This is the PATH that was
+         in effect at install time; re-run install after moving those tools. -->
+    <key>PATH</key><string>$path_esc</string>
+    <key>HOME</key><string>$(printf '%s' "$HOME" | xml_escape)</string>
+$(extra_env_plist)
+  </dict>
+</dict>
+</plist>
+PLISTEOF
+
+  launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$UID" "$PLIST"
+  launchctl enable "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+
+  if wait_until_up; then
+    printf '\n%sinstalled and running%s at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
+  else
+    printf '\n%sinstalled, but it has not come up yet.%s check: %s\n' "$YEL" "$RST" "$LOG_FILE" >&2
+  fi
+  printf '  it now starts at login and restarts if it dies.\n'
+  printf '  %slaunchd agents start at LOGIN, not at power-on. For a machine that\n' "$DIM"
+  printf '  reboots unattended, turn on automatic login (System Settings →\n'
+  printf '  Users & Groups → Automatic login) or nobody can reach the page until\n'
+  printf '  someone logs in.%s\n' "$RST"
+  printf '  logs: %s\n' "$LOG_FILE"
+}
+
+install_systemd() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    printf '%ssystemctl not found.%s Use `start` and supervise it yourself.\n' "$RED" "$RST" >&2
+    return 1
+  fi
+  if is_running; then
+    printf '%sstopping the copy that is already running, so systemd can own it%s\n' "$DIM" "$RST"
+    cmd_stop >/dev/null || true
+  fi
+
+  rotate_log
+  mkdir -p "$(dirname "$UNIT")"
+  cat >"$UNIT" <<UNITEOF
+[Unit]
+Description=prsnooze, PR reviews that happen while you sleep
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$ROOT
+# --check-warn: log a failed preflight check and start anyway. At boot there is
+# nobody to read a refusal, and a transient network check must not keep the
+# server down.
+ExecStart=$NODE_BIN $ROOT/bin/start.js --check-warn
+# claude, gh and git have to be findable from a non-login service environment.
+Environment=PATH=$PATH
+$(extra_env_systemd)Restart=always
+RestartSec=5
+# server.js traps SIGTERM, aborts running reviews and reaps their claude
+# children. Give it room to do that instead of killing the group outright.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
+UNITEOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$UNIT_NAME"
+
+  # Without lingering, a user service stops at logout and does not start at
+  # boot, which is exactly the failure this whole command exists to prevent.
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl enable-linger "$USER" >/dev/null 2>&1 ||
+      printf '%scould not enable lingering. Run: sudo loginctl enable-linger %s%s\n' "$YEL" "$USER" "$RST"
+  fi
+
+  if wait_until_up; then
+    printf '\n%sinstalled and running%s at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
+  else
+    printf '\n%sinstalled, but it has not come up yet.%s check: journalctl --user -u %s\n' "$YEL" "$RST" "$UNIT_NAME" >&2
+  fi
+  printf '  it now starts at boot and restarts if it dies.\n'
+  printf '  logs: journalctl --user -u %s -f\n' "$UNIT_NAME"
+}
+
+cmd_uninstall() {
+  local found=""
+  if [ -f "$PLIST" ]; then
+    launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+    rm -f "$PLIST"
+    found=1
+    printf '%sremoved the launchd agent.%s\n' "$GRN" "$RST"
+  fi
+  if [ -f "$UNIT" ]; then
+    systemctl --user disable --now "$UNIT_NAME" >/dev/null 2>&1 || true
+    rm -f "$UNIT"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    found=1
+    printf '%sremoved the systemd unit.%s\n' "$GRN" "$RST"
+  fi
+  [ -n "$found" ] || printf '%snothing installed.%s\n' "$DIM" "$RST"
+  printf 'prsnooze is stopped now; `bin/prsnooze-service start` runs it without a supervisor.\n'
+}
+
+# ------------------------------------------------------------------ help -----
+
+cmd_help() {
+  printf '\n%s%s  👀 prsnooze%s %s(keeping it running)%s\n\n' "$ORG" "$BOLD" "$RST" "$DIM" "$RST"
+  cat <<EOF
+${BOLD}usage:${RST} bin/prsnooze-service <command>
+
+${BOLD}every day${RST}
+  ${GRN}start${RST}       start it if it isn't already up. Safe to run twice: if it is
+              already running this prints the URL and changes nothing.
+  ${GRN}stop${RST}        stop it, however it was started
+  ${GRN}restart${RST}     stop then start (what to run after editing .env)
+  ${GRN}status${RST}      up or down, on what URL, and what is supervising it
+  ${GRN}logs${RST} [-f]   show the log (-f follows)
+
+${BOLD}survive a reboot${RST}
+  ${GRN}install${RST}     hand it to launchd (macOS) or systemd (Linux) so it starts
+              at login/boot and restarts itself if it crashes
+  ${GRN}uninstall${RST}   undo that
+
+${DIM}port ${PORT_RESOLVED} (from .env) · data ${STATE_DIR}
+docker users need none of this: docker-compose.yml already restarts the
+container unless you stopped it yourself.${RST}
+EOF
+}
+
+# ------------------------------------------------------------------ main -----
+
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+  start)      cmd_start "$@" ;;
+  stop)       cmd_stop "$@" ;;
+  restart)    cmd_stop "$@" || true; cmd_start ;;
+  status)     cmd_status "$@" ;;
+  logs)       cmd_logs "$@" ;;
+  install)    cmd_install "$@" ;;
+  uninstall)  cmd_uninstall "$@" ;;
+  url)        printf '%s\n' "$URL" ;;
+  help|-h|--help|"") cmd_help ;;
+  *)
+    printf '%sunknown command:%s %s\n' "$RED" "$RST" "$CMD" >&2
+    cmd_help >&2
+    exit 1
+    ;;
+esac

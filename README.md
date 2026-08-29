@@ -51,6 +51,8 @@ npm start
 
 That's the whole thing. To let colleagues use it, share that URL over your LAN or Tailscale — but read the next section first.
 
+That command runs in your terminal, so it stops when you close it. Once you're happy with it, `bin/prsnooze-service install` keeps it up and brings it back after a reboot ([Keep it running](#keep-it-running)).
+
 ## ⚠️ Read this before you share the URL
 
 prsnooze runs `claude --dangerously-skip-permissions`. That means:
@@ -64,6 +66,39 @@ So:
 1. **Don't put it on the public internet.** LAN or Tailscale only. There is no login on the page.
 2. **Use a fine-grained GitHub token** scoped to the repos you actually want reviewed (Pull requests: read+write, Contents: read). Not a classic all-repos token.
 3. Run it on a machine you don't mind seeing network activity from.
+
+## Keep it running
+
+`npm start` lives in your terminal. Close the window, sleep the laptop, reboot the machine, and prsnooze is gone until someone remembers to start it again. One command fixes that for good:
+
+```sh
+bin/prsnooze-service install
+```
+
+That hands prsnooze to the machine's own supervisor (launchd on macOS, systemd on Linux). It starts by itself at login or boot, comes straight back if it crashes, and writes to `~/.prsnooze/logs/server.log`.
+
+After that, everything is one command:
+
+| | |
+|---|---|
+| `bin/prsnooze-service start` | start it if it isn't already up |
+| `bin/prsnooze-service stop` | stop it, however it was started |
+| `bin/prsnooze-service restart` | bounce it, which is what to run after editing `.env` |
+| `bin/prsnooze-service status` | up or down, on what URL, and what is supervising it |
+| `bin/prsnooze-service logs -f` | follow the log |
+| `bin/prsnooze-service install` | hand it to launchd/systemd (safe to re-run) |
+| `bin/prsnooze-service uninstall` | undo that |
+
+All of them also work as `npm run service:<command>`.
+
+**Running one twice is not a mistake.** `start` on a server that is already up prints the URL and changes nothing: it never binds a second time and never kills the one already working. Plain `npm start` does the same, so the person who forgot it was running gets *"prsnooze is already running at http://…"* instead of a stack trace. Two servers reviewing the same PR is the failure this prevents.
+
+A few host-specific things worth knowing:
+
+- **macOS**: launchd user agents start at *login*, not at power-on. If the machine reboots unattended and nobody logs in, nothing is listening. Turn on automatic login (System Settings → Users & Groups) for a machine your team relies on.
+- **Linux**: user services stop at logout unless lingering is on. `install` enables it for you; if it can't, it tells you the `sudo loginctl enable-linger` line to run.
+- **Docker**: nothing to install. `docker-compose.yml` already says `restart: unless-stopped`, so `bin/docker-server start` survives reboots as long as Docker itself starts with the machine.
+- **Settings live in `.env`, not your shell profile.** A service doesn't read your shell. `install` records the `PATH` it saw (so `claude`, `gh` and `git` stay findable) along with `PORT` and `PRSNOOZE_HOME` if you set them, so re-run `install` after moving any of those tools.
 
 ## Everyone can see what's left of your plan
 

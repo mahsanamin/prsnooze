@@ -1,17 +1,26 @@
 {
   "name": "prsnooze",
   "version": "0.1.0",
-  "description": "prsnooze — PR reviews that happen while you sleep. Teammates paste a GitHub PR URL; the host runs Claude Code headlessly with your project's review skill and posts the review back to the PR.",
+  "description": "prsnooze \u2014 PR reviews that happen while you sleep. Teammates paste a GitHub PR URL; the host runs Claude Code headlessly with your project's review skill and posts the review back to the PR.",
   "main": "server.js",
   "type": "commonjs",
   "bin": {
-    "prsnooze": "bin/start.js"
+    "prsnooze": "bin/start.js",
+    "prsnooze-service": "bin/prsnooze-service"
   },
   "scripts": {
     "start": "node bin/start.js",
     "test": "node --test",
     "check": "node bin/start.js --check",
     "start:nochecks": "node bin/start.js --no-check",
+    "service": "bin/prsnooze-service",
+    "service:start": "bin/prsnooze-service start",
+    "service:stop": "bin/prsnooze-service stop",
+    "service:restart": "bin/prsnooze-service restart",
+    "service:status": "bin/prsnooze-service status",
+    "service:logs": "bin/prsnooze-service logs",
+    "service:install": "bin/prsnooze-service install",
+    "service:uninstall": "bin/prsnooze-service uninstall",
     "docker:start": "bin/docker-server start",
     "docker:stop": "bin/docker-server stop",
     "docker:restart": "bin/docker-server restart",
