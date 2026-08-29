@@ -127,7 +127,7 @@ sequenceDiagram
 
   U->>P: paste PR URL
   P->>G: read the PR (gh pr view)
-  P->>P: clone/fetch, git worktree add
+  P->>P: clone/fetch, git worktree add at the PR head
   P->>C: review this diff, using this project's rules
   C-->>U: live activity, streamed to the page
   C->>G: post the review
@@ -136,6 +136,10 @@ sequenceDiagram
 ```
 
 Because it reviews inside a real checkout of your repo, your `CLAUDE.md`, `AGENTS.md` and `.claude/skills/` are all picked up automatically.
+
+The worktree is checked out at **the PR's head commit**, so a file the reviewer opens is the code as proposed, and the `file:line` links in the review point at lines that actually exist there. prsnooze does that fetch and checkout itself, before claude starts — a reviewer that tries to move the checkout on its own gets refused, because `--dangerously-skip-permissions` silences a confirmation *prompt* but does not override a `permissions.ask` rule in the repo being reviewed, and a headless run has nobody to answer one.
+
+For the same reason prsnooze marks its own clones under `~/.prsnooze/repos/` as trusted workspaces in `~/.claude.json` — the one-time dialog that normally grants that only appears in an interactive session, and until it's answered claude silently ignores the reviewed repo's `permissions.allow` list and its project-level skills. It's written once per repo, it never creates the file, and it steps aside if claude is mid-write. `PRSNOOZE_TRUST_CLONES=false` turns it off.
 
 ## When it approves on its own
 
@@ -222,6 +226,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
 | `CLAUDE_BIN` | `claude` | Path to the claude CLI, if it isn't on `PATH`. |
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | Keep the checkout after a successful review (for debugging). |
+| `PRSNOOZE_TRUST_CLONES` | `true` | Mark prsnooze's own clones as trusted workspaces in `~/.claude.json`, so the reviewed repo's `.claude/` is honored. `false` = never touch that file. |
 | `HERO_IMAGE` | *unset* | Optional background image. Unset, the page draws its own night sky. |
 
 ## Approving by hand

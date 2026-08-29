@@ -1479,7 +1479,12 @@ function entrySpec(ev) {
     case "caught_up": return null;
     case "log": return { cat: "info", icon: "·", label: "log", body: escapeHtml(ev.message || "") };
     case "pr_meta": return { cat: "pr", icon: "🔗", label: "PR", body: `<strong>${escapeHtml(ev.nameWithOwner || "")} #${ev.number}</strong> — ${escapeHtml(ev.title || "")}` };
-    case "worktree_ready": return { cat: "info", icon: "📁", label: "worktree", body: `<span class="dim">${escapeHtml(ev.path || "")}</span>` };
+    case "worktree_ready": {
+      // Which commit is being reviewed, not just where: the PR head normally,
+      // the base branch when its head couldn't be fetched.
+      const at = ev.sha ? `${ev.sha.slice(0, 7)}${ev.atPrHead ? " (PR head)" : " (base)"}` : "";
+      return { cat: "info", icon: "📁", label: "worktree", body: `<span class="dim">${escapeHtml(ev.path || "")}${at ? ` @ ${escapeHtml(at)}` : ""}</span>` };
+    }
     case "interrupted": return { cat: "warn", icon: "⏸", label: "interrupted", body: escapeHtml(ev.message || "interrupted") };
     case "skill_resolved": { const tag = ev.source === "project" ? "project" : ev.source === "user" ? "user" : ev.source === "bundled" ? "bundled" : ""; return { cat: "ok", icon: "🧩", label: "skill", body: `<strong>${escapeHtml(ev.name || "")}</strong> <span class="tag">${escapeHtml(tag)}</span> <span class="dim">${escapeHtml(ev.pathDisplay || ev.path || "")}</span>` }; }
     case "skill_missing": return { cat: "warn", icon: "🧩", label: "skill", body: `<strong>no project skill</strong> — generic review ${details("paths searched", (ev.attempted || []).join("\n"))}` };

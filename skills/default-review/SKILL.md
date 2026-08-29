@@ -10,7 +10,7 @@ You're reviewing a PR headlessly. Output **only** actionable findings, each anch
 ## Inputs
 
 - PR URL is in the enclosing prompt
-- Current directory = fresh worktree of the PR's base branch
+- Current directory = fresh detached worktree, already checked out at the PR's head commit (the enclosing prompt names the SHA). Don't check anything out; the files you read are the code as proposed, and `origin/<base>` is there if you want a local diff.
 - `gh` CLI authenticated
 
 ## Steps
