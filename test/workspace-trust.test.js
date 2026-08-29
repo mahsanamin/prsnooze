@@ -27,7 +27,12 @@ const path = require("node:path");
 const { workingTreeBlock } = require("../lib/claude-runner");
 
 function sandbox() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-trust-"));
+  // realpath, because the module records trust under both the resolved and the
+  // real path of a directory. On macOS os.tmpdir() is /var/..., a symlink to
+  // /private/var/..., so a raw mkdtemp path is two different keys and a
+  // fixture written under one of them looks half-trusted. Resolving here keeps
+  // these tests testing the flag rather than the platform's symlinks.
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-trust-")));
   const file = path.join(dir, ".claude.json");
   return { dir, file };
 }
