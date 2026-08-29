@@ -49,9 +49,9 @@ npm start
 
 `npm start` checks your setup, tells you anything that's missing, and prints a URL — by default **http://localhost:8284**. Open it, paste a PR link, watch it work.
 
-That's the whole thing. To let colleagues use it, share that URL over your LAN or Tailscale — but read the next section first.
+That command runs in your terminal, so it stops when you close it. Once it's working, one more command keeps it up for good, through crashes and reboots: `bin/prsnooze-service install` ([Keep it running](#keep-it-running)).
 
-That command runs in your terminal, so it stops when you close it. Once you're happy with it, `bin/prsnooze-service install` keeps it up and brings it back after a reboot ([Keep it running](#keep-it-running)).
+That's the whole thing. To let colleagues use it, share that URL over your LAN or Tailscale — but read the next section first.
 
 ## ⚠️ Read this before you share the URL
 
@@ -79,7 +79,7 @@ That hands prsnooze to the machine's own supervisor (launchd on macOS, systemd o
 
 After that, everything is one command:
 
-| | |
+| command | what it does |
 |---|---|
 | `bin/prsnooze-service start` | start it if it isn't already up |
 | `bin/prsnooze-service stop` | stop it, however it was started |
@@ -96,7 +96,7 @@ All of them also work as `npm run service:<command>`.
 A few host-specific things worth knowing:
 
 - **macOS**: launchd user agents start at *login*, not at power-on. If the machine reboots unattended and nobody logs in, nothing is listening. Turn on automatic login (System Settings → Users & Groups) for a machine your team relies on.
-- **Linux**: user services stop at logout unless lingering is on. `install` enables it for you; if it can't, it tells you the `sudo loginctl enable-linger` line to run.
+- **Linux**: user services stop at logout unless lingering is on. `install` enables it for you; if it can't, it tells you the `sudo loginctl enable-linger` line to run. The macOS path is the one that's been run end to end so far, so if systemd misbehaves on your box, please open an issue.
 - **Docker**: nothing to install. `docker-compose.yml` already says `restart: unless-stopped`, so `bin/docker-server start` survives reboots as long as Docker itself starts with the machine.
 - **Settings live in `.env`, not your shell profile.** A service doesn't read your shell. `install` records the `PATH` it saw (so `claude`, `gh` and `git` stay findable) along with `PORT` and `PRSNOOZE_HOME` if you set them, so re-run `install` after moving any of those tools.
 
@@ -193,6 +193,7 @@ Before it runs, it checks whether that's worth doing and tells you: *"2 new comm
 | `claude` CLI, logged in | you need it | bundled — `bin/docker-server claude-login` |
 | `gh` CLI, authenticated | you need it | bundled — `bin/docker-server gh-login` |
 | git + SSH key | you need it | bundled (uses the gh token over HTTPS) |
+| Staying up after a reboot | `bin/prsnooze-service install` | already on (`restart: unless-stopped`) |
 
 Docker is the easier route for a machine several people will use, since it brings its own `node`, `git`, `gh` and Claude Code:
 
@@ -204,7 +205,7 @@ bin/docker-server gh-login       # once: gh auth (paste a fine-grained PAT)
 
 Then open **http://localhost:8284**. Other commands: `stop`, `restart`, `rebuild`, `logs`, `status`, `ssh`, `url` — all but `url` also work as `npm run docker:<command>`. Logins and cached repos live in docker volumes, so `rebuild` doesn't sign you out.
 
-Runtime data (clones, worktrees, past reviews) lives in `~/.prsnooze/`, outside the project.
+Runtime data (clones, worktrees, past reviews) lives in `~/.prsnooze/`, outside the project. When it runs as a service, its log is there too, at `~/.prsnooze/logs/server.log`.
 
 ## Configuration
 
@@ -233,6 +234,7 @@ Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever co
 
 ## When something goes wrong
 
+- **The page won't load at all** — run `bin/prsnooze-service status`. If it says *stopped*, `bin/prsnooze-service start` brings it back; if it says *supervisor none*, it won't survive the next reboot until you run `install`.
 - **`gh pr view failed`** — run `gh auth status`. This is the most common one.
 - **`PR is merged, not OPEN`** — it only reviews open PRs.
 - **Claude exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. `cd` in and run `claude` there to see what happened.
