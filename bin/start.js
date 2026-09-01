@@ -229,8 +229,20 @@ async function runPreflight() {
         });
         const text = (out.stderr || "") + (out.stdout || "");
         if (/successfully authenticated/i.test(text)) return "authenticated";
-        if (/Permission denied/i.test(text))
-          throw new Error("permission denied — SSH key not registered with GitHub");
+        if (/Permission denied/i.test(text)) {
+          // The failure that actually bites: this passes in a terminal, whose
+          // ssh-agent holds the unlocked key, and fails as a background service,
+          // which gets a different agent with nothing in it. Say which of the
+          // two situations this run is in, because "add a key to GitHub" is the
+          // wrong advice for a key that is already there.
+          const err = new Error(`permission denied (${await describeAgent()})`);
+          err.hint =
+            "If `git fetch` works in your terminal but not here, the key only lives in your shell's " +
+            "ssh-agent, and a service never sees it. On macOS, save the passphrase once so ssh can " +
+            "use the key straight from disk: `ssh-add --apple-use-keychain ~/.ssh/<your-key>`. " +
+            "If the key genuinely isn't on your account: https://github.com/settings/keys";
+          throw err;
+        }
         if (/Host key verification failed/i.test(text))
           throw new Error("host key verification failed");
         throw new Error(text.split("\n")[0] || "unexpected ssh error");
@@ -260,10 +272,25 @@ async function runPreflight() {
       allOk = false;
       console.log(`${c.red}fail${c.reset}`);
       console.log(`    ${c.red}${e.message}${c.reset}`);
-      if (ch.hint) console.log(`    ${c.dim}hint: ${ch.hint}${c.reset}`);
+      const hint = e.hint || ch.hint;
+      if (hint) console.log(`    ${c.dim}hint: ${hint}${c.reset}`);
     }
   }
   return allOk;
+}
+
+// What the ssh-agent in THIS environment holds. `ssh-add -l` exits 0 with a
+// list, 1 for a reachable agent with nothing in it, and 2 when there is no
+// agent to talk to at all.
+async function describeAgent() {
+  return await new Promise((resolve) => {
+    execFile("ssh-add", ["-l"], { timeout: 5000 }, (err, stdout) => {
+      if (err && err.code === 2) return resolve("no ssh-agent in this environment");
+      if (err) return resolve("ssh-agent holds no keys");
+      const n = stdout.trim().split("\n").filter(Boolean).length;
+      resolve(`ssh-agent holds ${n} key${n === 1 ? "" : "s"}, none accepted`);
+    });
+  });
 }
 
 function resolveDataHome() {

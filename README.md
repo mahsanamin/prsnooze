@@ -98,6 +98,7 @@ A few host-specific things worth knowing:
 - **macOS**: launchd user agents start at *login*, not at power-on. If the machine reboots unattended and nobody logs in, nothing is listening. Turn on automatic login (System Settings → Users & Groups) for a machine your team relies on.
 - **Linux**: user services stop at logout unless lingering is on. `install` enables it for you; if it can't, it tells you the `sudo loginctl enable-linger` line to run. The macOS path is the one that's been run end to end so far, so if systemd misbehaves on your box, please open an issue.
 - **Docker**: nothing to install. `docker-compose.yml` already says `restart: unless-stopped`, so `bin/docker-server start` survives reboots as long as Docker itself starts with the machine.
+- **Git has to work without your terminal.** A service gets its own (empty) ssh-agent, so a key that only lives in the agent your shell started is invisible to it, and every review dies on `Permission denied (publickey)` while `git fetch` still works fine when you type it. `install` checks for this by running the preflight with your agent stripped out, and refuses rather than installing something that will fail on the first PR. On macOS the one-time fix is to save the key's passphrase so ssh can use the key straight from disk: `ssh-add --apple-use-keychain ~/.ssh/<your-key>`.
 - **Settings live in `.env`, not your shell profile.** A service doesn't read your shell. `install` records the `PATH` it saw (so `claude`, `gh` and `git` stay findable) along with `PORT` and `PRSNOOZE_HOME` if you set them, so re-run `install` after moving any of those tools.
 
 ## Everyone can see what's left of your plan
@@ -241,6 +242,7 @@ Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever co
 
 - **The page won't load at all** — run `bin/prsnooze-service status`. If it says *stopped*, `bin/prsnooze-service start` brings it back; if it says *supervisor none*, it won't survive the next reboot until you run `install`.
 - **`gh pr view failed`** — run `gh auth status`. This is the most common one.
+- **`Permission denied (publickey)` on `git fetch`, but git works in your terminal** — the running server has no access to your shell's ssh-agent. Save the key's passphrase once with `ssh-add --apple-use-keychain ~/.ssh/<your-key>` (macOS), which lets ssh use the key from disk. Confirm it with `env -u SSH_AUTH_SOCK ssh -T git@github.com`.
 - **`PR is merged, not OPEN`** — it only reviews open PRs.
 - **Claude exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. `cd` in and run `claude` there to see what happened.
 - **Every review suddenly fails** — check the usage chip in the top bar first. A spent plan limit looks exactly like a broken tool.

@@ -330,10 +330,20 @@ cmd_install() {
   # Check the setup once, here, where a person is watching. The service itself
   # starts with --check-warn (log and continue), because a boot-time failure on
   # a transient network check should not leave the machine with no prsnooze.
+  #
+  # SSH_AUTH_SOCK is stripped on purpose. A service gets its own ssh-agent (on
+  # macOS launchd hands it an empty one) and never the loaded agent from the
+  # terminal you are typing in, so checking with your agent present would pass
+  # here and then fail on the first `git fetch` of the first review. This runs
+  # the checks in the harsher environment the service will actually live in.
   if [ "${1:-}" != "--force" ]; then
-    printf '%schecking your setup before installing%s\n\n' "$BOLD" "$RST"
-    if ! "$NODE_BIN" "$ROOT/bin/start.js" --check; then
+    printf '%schecking your setup before installing%s\n' "$BOLD" "$RST"
+    printf '%s(without your terminal'"'"'s ssh-agent, which the service will not have)%s\n\n' "$DIM" "$RST"
+    if ! env -u SSH_AUTH_SOCK "$NODE_BIN" "$ROOT/bin/start.js" --check; then
       printf '\n%snot installing.%s Fix the above, or re-run with `install --force`.\n' "$RED" "$RST" >&2
+      printf '%sA check that passes in your terminal can still fail here: that is the point of running\n' "$DIM"
+      printf 'them this way, and installing over it would give you a service that starts fine and then\n'
+      printf 'fails every review.%s\n' "$RST" >&2
       return 1
     fi
   fi
