@@ -214,41 +214,64 @@ async function runPreflight() {
       },
       hint: "Run `gh auth login` and pick the GitHub.com account this server should review as.",
     },
-    {
-      name: "GitHub SSH reachable",
-      run: async () => {
-        // ssh -T git@github.com exits 1 on success (with the welcome message).
-        // We accept exit 1 with the right message; any other error is a real fail.
-        const out = await new Promise((resolve) => {
-          execFile(
-            "ssh",
-            ["-T", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "git@github.com"],
-            { timeout: 8000 },
-            (err, stdout, stderr) => resolve({ err, stdout, stderr }),
-          );
-        });
-        const text = (out.stderr || "") + (out.stdout || "");
-        if (/successfully authenticated/i.test(text)) return "authenticated";
-        if (/Permission denied/i.test(text)) {
-          // The failure that actually bites: this passes in a terminal, whose
-          // ssh-agent holds the unlocked key, and fails as a background service,
-          // which gets a different agent with nothing in it. Say which of the
-          // two situations this run is in, because "add a key to GitHub" is the
-          // wrong advice for a key that is already there.
-          const err = new Error(`permission denied (${await describeAgent()})`);
-          err.hint =
-            "If `git fetch` works in your terminal but not here, the key only lives in your shell's " +
-            "ssh-agent, and a service never sees it. On macOS, save the passphrase once so ssh can " +
-            "use the key straight from disk: `ssh-add --apple-use-keychain ~/.ssh/<your-key>`. " +
-            "If the key genuinely isn't on your account: https://github.com/settings/keys";
-          throw err;
+    transport() === "ssh"
+      ? {
+          name: "GitHub SSH reachable",
+          run: async () => {
+            // ssh -T git@github.com exits 1 on success (with the welcome
+            // message). Accept exit 1 with the right message; anything else is
+            // a real failure.
+            const out = await new Promise((resolve) => {
+              execFile(
+                "ssh",
+                ["-T", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "git@github.com"],
+                { timeout: 8000 },
+                (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+              );
+            });
+            const text = (out.stderr || "") + (out.stdout || "");
+            if (/successfully authenticated/i.test(text)) return "authenticated";
+            if (/Permission denied/i.test(text)) {
+              // The failure that actually bites: this passes in a terminal,
+              // whose ssh-agent holds the unlocked key, and fails as a
+              // background service, which gets a different agent with nothing
+              // in it. Say which of the two this run is, because "add a key to
+              // GitHub" is the wrong advice for a key that is already there.
+              const err = new Error(`permission denied (${await describeAgent()})`);
+              err.hint =
+                "You are on PRSNOOZE_GIT_TRANSPORT=ssh. A service never sees the ssh-agent your " +
+                "shell started, so save the key's passphrase once (macOS: " +
+                "`ssh-add --apple-use-keychain ~/.ssh/<your-key>`), or drop the setting and let " +
+                "prsnooze use the gh token over HTTPS, which needs no key at all.";
+              throw err;
+            }
+            if (/Host key verification failed/i.test(text))
+              throw new Error("host key verification failed");
+            throw new Error(text.split("\n")[0] || "unexpected ssh error");
+          },
+          hint: "Add an SSH key to your GitHub account: https://github.com/settings/keys",
         }
-        if (/Host key verification failed/i.test(text))
-          throw new Error("host key verification failed");
-        throw new Error(text.split("\n")[0] || "unexpected ssh error");
-      },
-      hint: "Add an SSH key to your GitHub account: https://github.com/settings/keys",
-    },
+      : {
+          name: "git can clone and fetch (https, via the gh token)",
+          run: async () => {
+            // Exactly what git will ask when it fetches: hand the credential
+            // helper a github.com request and see whether a token comes back.
+            // This is the check that has to pass in the *service's* environment,
+            // and unlike SSH it has no agent to depend on.
+            const gh = process.env.GH_BIN || "gh";
+            const answer = await askCredentialHelper(gh);
+            if (!/^password=\S/m.test(answer)) {
+              const err = new Error("gh returned no token for github.com");
+              err.hint =
+                "Run `gh auth login` (or `gh auth refresh`) so gh holds a token that can read the " +
+                "repos you want reviewed.";
+              throw err;
+            }
+            const user = (answer.match(/^username=(.+)$/m) || [])[1];
+            return user ? `as ${user}` : "ok";
+          },
+          hint: "Run `gh auth login` so gh holds a token git can use.",
+        },
     {
       name: `data dir writable (${tildify(dataHome)})`,
       run: async () => {
@@ -277,6 +300,26 @@ async function runPreflight() {
     }
   }
   return allOk;
+}
+
+// Which transport lib/git-ops will use. Read the same two places it does, in
+// the same order, so the check can never test a path the server won't take.
+// .env is consulted directly because server.js only loads it after preflight.
+function transport() {
+  const { readEnvFile } = require(path.join(ROOT, "lib", "instance.js"));
+  const raw =
+    process.env.PRSNOOZE_GIT_TRANSPORT || readEnvFile(ENV_FILE).PRSNOOZE_GIT_TRANSPORT || "https";
+  return String(raw).toLowerCase() === "ssh" ? "ssh" : "https";
+}
+
+// Ask `gh auth git-credential` for github.com the way git would.
+function askCredentialHelper(gh) {
+  return new Promise((resolve) => {
+    const child = execFile(gh, ["auth", "git-credential", "get"], { timeout: 8000 }, (err, stdout) =>
+      resolve(err ? "" : stdout),
+    );
+    child.stdin.end("protocol=https\nhost=github.com\n\n");
+  });
 }
 
 // What the ssh-agent in THIS environment holds. `ssh-add -l` exits 0 with a

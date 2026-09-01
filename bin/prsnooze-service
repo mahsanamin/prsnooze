@@ -19,6 +19,7 @@
 #   logs       tail the log (-f to follow)
 #   install    have the OS start it at login/boot and restart it if it dies
 #   uninstall  remove that, leaving the server running
+#   doctor     run the setup checks the way the SERVICE sees them
 #
 # Docker users don't need any of this: docker-compose.yml already says
 # `restart: unless-stopped`, so `bin/docker-server start` survives reboots on
@@ -340,6 +341,7 @@ cmd_install() {
     printf '%schecking your setup before installing%s\n' "$BOLD" "$RST"
     printf '%s(without your terminal'"'"'s ssh-agent, which the service will not have)%s\n\n' "$DIM" "$RST"
     if ! env -u SSH_AUTH_SOCK "$NODE_BIN" "$ROOT/bin/start.js" --check; then
+      printf '\n%sRe-run these any time with `bin/prsnooze-service doctor`.%s\n' "$DIM" "$RST" >&2
       printf '\n%snot installing.%s Fix the above, or re-run with `install --force`.\n' "$RED" "$RST" >&2
       printf '%sA check that passes in your terminal can still fail here: that is the point of running\n' "$DIM"
       printf 'them this way, and installing over it would give you a service that starts fine and then\n'
@@ -498,6 +500,16 @@ cmd_uninstall() {
 
 # ------------------------------------------------------------------ help -----
 
+# The checks, run the way the service experiences them rather than the way your
+# terminal does. The difference is the whole reason this exists: a shell hands
+# git a loaded ssh-agent and a full profile, a service hands it neither, so a
+# setup can be perfect when you test it by hand and broken every night.
+cmd_doctor() {
+  printf '\n%schecking prsnooze the way the service sees it%s\n' "$BOLD" "$RST"
+  printf '%s(no ssh-agent, no shell profile)%s\n\n' "$DIM" "$RST"
+  env -u SSH_AUTH_SOCK "$NODE_BIN" "$ROOT/bin/start.js" --check
+}
+
 cmd_help() {
   printf '\n%s%s  👀 prsnooze%s %s(keeping it running)%s\n\n' "$ORG" "$BOLD" "$RST" "$DIM" "$RST"
   cat <<EOF
@@ -510,6 +522,8 @@ ${BOLD}every day${RST}
   ${GRN}restart${RST}     stop then start (what to run after editing .env)
   ${GRN}status${RST}      up or down, on what URL, and what is supervising it
   ${GRN}logs${RST} [-f]   show the log (-f follows)
+  ${GRN}doctor${RST}      run the setup checks the way the service sees them,
+              which is not the way your terminal does
 
 ${BOLD}survive a reboot${RST}
   ${GRN}install${RST}     hand it to launchd (macOS) or systemd (Linux) so it starts
@@ -532,6 +546,7 @@ case "$CMD" in
   stop)       cmd_stop "$@" ;;
   restart)    cmd_stop "$@" || true; cmd_start ;;
   status)     cmd_status "$@" ;;
+  doctor)     cmd_doctor "$@" ;;
   logs)       cmd_logs "$@" ;;
   install)    cmd_install "$@" ;;
   uninstall)  cmd_uninstall "$@" ;;
