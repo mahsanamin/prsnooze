@@ -107,6 +107,47 @@ port_pid() {
 
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
+# ------------------------------------------------------------- launchd -------
+
+# `launchctl bootout` returns before the job is actually gone, so a bootstrap
+# fired straight after it (which is exactly what `restart` does) can land while
+# the old job is still unloading and fail with "Input/output error" or "service
+# already bootstrapped". Wait for the unload, and retry the bootstrap rather
+# than reporting a failure the next attempt would have fixed.
+launchd_loaded() { launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; }
+
+launchd_wait_unloaded() {
+  local i=0
+  while [ "$i" -lt 20 ]; do
+    launchd_loaded || return 0
+    sleep 0.25
+    i=$((i + 1))
+  done
+  return 1
+}
+
+launchd_bootstrap() {
+  local i=0 out=""
+  while [ "$i" -lt 12 ]; do
+    if out="$(launchctl bootstrap "gui/$UID" "$PLIST" 2>&1)"; then
+      return 0
+    fi
+    case "$out" in
+      *"already bootstrapped"*)
+        # It came back on its own between our check and this call. Fine.
+        return 0 ;;
+      *"Input/output error"*|*"Operation now in progress"*|*"Bootstrap failed: 5"*)
+        sleep 0.5 ;;
+      *)
+        printf '%slaunchctl bootstrap failed:%s %s\n' "$RED" "$RST" "$out" >&2
+        return 1 ;;
+    esac
+    i=$((i + 1))
+  done
+  printf '%slaunchctl bootstrap kept failing:%s %s\n' "$RED" "$RST" "$out" >&2
+  return 1
+}
+
 # --------------------------------------------------------------- starting ----
 
 rotate_log() {
@@ -180,7 +221,11 @@ cmd_start() {
 
   case "$(supervisor)" in
     launchd)
-      launchctl kickstart "gui/$UID/$LABEL" >/dev/null 2>&1 || launchctl bootstrap "gui/$UID" "$PLIST"
+      if launchd_loaded; then
+        launchctl kickstart "gui/$UID/$LABEL" >/dev/null 2>&1 || launchd_bootstrap || return 1
+      else
+        launchd_bootstrap || return 1
+      fi
       wait_until_up || { printf '%slaunchd did not bring it up.%s check: %s\n' "$RED" "$RST" "$LOG_FILE" >&2; return 1; }
       printf '%sstarted%s (launchd) at %s%s%s\n' "$GRN" "$RST" "$BOLD" "$URL" "$RST"
       ;;
@@ -216,7 +261,10 @@ cmd_stop() {
   fi
 
   case "$sup" in
-    launchd) launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true ;;
+    launchd)
+      launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+      launchd_wait_unloaded || printf '%slaunchd is still unloading the job%s\n' "$DIM" "$RST"
+      ;;
     systemd) systemctl --user stop "$UNIT_NAME" >/dev/null 2>&1 || true ;;
   esac
 
@@ -407,7 +455,8 @@ $(extra_env_plist)
 PLISTEOF
 
   launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$UID" "$PLIST"
+  launchd_wait_unloaded || true
+  launchd_bootstrap || return 1
   launchctl enable "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 
   if wait_until_up; then
