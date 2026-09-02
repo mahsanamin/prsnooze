@@ -230,6 +230,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `PRSNOOZE_GIT_TRANSPORT` | `https` | How git reaches GitHub. `https` uses the gh token, so no SSH key or agent is involved. `ssh` if your key can read repos your gh token can't. |
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | Keep the checkout after a successful review (for debugging). |
 | `PRSNOOZE_TRUST_CLONES` | `true` | Mark prsnooze's own clones as trusted workspaces in `~/.claude.json`, so the reviewed repo's `.claude/` is honored. `false` = never touch that file. |
+| `PRSNOOZE_HOST` | *detected* | The name the page shows — "on Ada's machine" by the logo, and the browser tab title. Falls back to `git config user.name`, then the OS username, then the hostname. |
 | `HERO_IMAGE` | *unset* | Optional background image. Unset, the page draws its own night sky. |
 
 ## Approving by hand
