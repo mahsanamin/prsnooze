@@ -126,6 +126,11 @@ After pushing, inspect all GitHub checks for the pushed commit. A badge such as
 or clearly report the unresolved failure. Never call a delivery complete while
 its required checks are red.
 
+The audit job deliberately pins its npm client and retries the audit once. The
+Node 22 image's bundled npm has intermittently fallen back to the retiring Quick
+Audit endpoint and falsely failed clean lockfiles. Do not remove that pin or
+retry without validating the Bulk Advisory path in CI.
+
 ## Change discipline
 
 - Preserve unrelated user changes and keep patches scoped.

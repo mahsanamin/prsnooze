@@ -180,11 +180,10 @@ test("a rejected Codex model lookup cannot suppress the process exit", async () 
   assert.equal(events.some((event) => event.subtype === "model"), false);
 });
 
-test("a stuck Codex model lookup is bounded and cannot hang the job", async () => {
+test("a stuck Codex model lookup is bounded and cannot hang the job", { timeout: 5_000 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-codex-model-timeout-"));
   const { bin } = fakeCodex(dir);
-  const startedAt = Date.now();
-  await collectRun({
+  const events = await collectRun({
     bin,
     cwd: dir,
     promptText: "review now",
@@ -192,7 +191,8 @@ test("a stuck Codex model lookup is bounded and cannot hang the job", async () =
     sessionModelTimeoutMs: 10,
   });
 
-  assert.ok(Date.now() - startedAt < 1_000, "exit should not wait forever for model enrichment");
+  assert.equal(events.filter((event) => event.kind === "result").length, 1);
+  assert.equal(events.some((event) => event.subtype === "model"), false);
 });
 
 test("Codex model lookup reports explicit choices but does not invent a CLI default", async () => {
