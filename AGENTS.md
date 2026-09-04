@@ -68,7 +68,9 @@ fixtures together.
 The Docker provider CLIs are exact dependencies in `docker/providers/`. Keep
 that lockfile and its Dependabot entry: an image rebuild at one commit must not
 silently move an adapter to a different CLI schema. Treat a provider bump as an
-adapter compatibility change and run the real-CLI checks below.
+adapter compatibility change and run the real-CLI checks below. Pin only a CLI
+version that has completed those checks; do not freeze an incidental version
+merely because an earlier unpinned image happened to install it.
 
 ## Claude stream invariants
 

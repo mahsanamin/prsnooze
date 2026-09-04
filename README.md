@@ -203,10 +203,12 @@ Before it runs, it checks whether that's worth doing and tells you: *"2 new comm
 | An SSH key | not needed — it clones over HTTPS with the gh token | same |
 | Staying up after a reboot | `bin/prsnooze-service install` | already on (`restart: unless-stopped`) |
 
-For local development, Node `22.23.1` is pinned in both `.nvmrc` and
+For local development, Node `22.23.2` is pinned in both `.nvmrc` and
 `.tool-versions`. Run `nvm install` (and then `nvm use`), or use `asdf install`
 or `mise install` after configuring that manager's Node.js plugin/backend. Node
-20 remains supported by the package and CI compatibility matrix.
+20 remains supported by the package and CI compatibility matrix. The exact pin
+tracks the Docker image rather than the versions already installed on any one
+developer machine.
 
 `bin/prsnooze-service install` records the absolute path of the `node` active
 at install time so the supervisor can find it after login or reboot. Changing

@@ -3,7 +3,7 @@
 # Ships node, git, gh, Claude Code, and Codex CLI. Provider and gh auth are
 # completed after startup and persist in named volumes across rebuilds.
 
-FROM node:22-slim
+FROM node:22.23.2-slim
 
 # OS deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
