@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { normalizeCodexEvent, runCodex } = require("../lib/providers/codex");
+const { normalizeCodexEvent, runCodex, isRecognizedCodexEvent } = require("../lib/providers/codex");
 
 test("Codex JSONL is normalized into the existing live event contract", () => {
   const state = { startedAt: Date.now() - 10, cwd: "/tmp/repo", numTurns: 0, finalText: "" };
@@ -87,4 +87,60 @@ test("Codex fresh and resumed runs use the non-interactive JSON interface", asyn
   assert.deepEqual(args.slice(0, 2), ["exec", "resume"]);
   assert.ok(args.includes("thread-abc"));
   assert.equal(args.at(-1), "verify fixes");
+});
+
+test("a Codex notice reaches the log instead of being dropped or alarming", () => {
+  const state = { startedAt: Date.now(), numTurns: 0, finalText: "" };
+  assert.deepEqual(
+    normalizeCodexEvent({
+      type: "item.completed",
+      item: { id: "item_0", type: "error", message: "Skill descriptions were shortened." },
+    }, state),
+    [{ kind: "log", message: "Codex notice: Skill descriptions were shortened." }],
+  );
+});
+
+test("events Codex sends but the log has no use for stay quiet; unknown ones do not", () => {
+  // turn.started drives the turn counter and shows nothing, so it must not
+  // reach the browser as a raw-JSON `other` line.
+  assert.equal(isRecognizedCodexEvent({ type: "turn.started" }), true);
+  assert.equal(isRecognizedCodexEvent({ type: "item.completed", item: { type: "agent_message" } }), true);
+  // A type this adapter has never seen must stay visible, so a Codex schema
+  // change shows up instead of vanishing.
+  assert.equal(isRecognizedCodexEvent({ type: "turn.interrupted" }), false);
+  assert.equal(isRecognizedCodexEvent({ type: "item.completed", item: { type: "brand_new_item" } }), false);
+});
+
+function fakeCodexNoise(dir) {
+  const bin = path.join(dir, "codex-noise");
+  fs.writeFileSync(bin, `#!/bin/sh
+printf '%s\\n' 'Reading additional input from stdin...' >&2
+printf '%s\\n' '{"type":"thread.started","thread_id":"thread-abc"}'
+printf '%s\\n' '{"type":"turn.started"}'
+printf '%s\\n' '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"shortened"}}'
+printf '%s\\n' '{"type":"turn.interrupted"}'
+printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
+printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}'
+`);
+  fs.chmodSync(bin, 0o755);
+  return bin;
+}
+
+test("a clean Codex run produces no stderr warning and no raw-JSON noise", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-codex-noise-"));
+  const bin = fakeCodexNoise(dir);
+  const events = await collectRun({ bin, cwd: dir, promptText: "review now" });
+
+  // The empty-stdin notice is the CLI being chatty, not a problem to report.
+  assert.deepEqual(events.filter((e) => e.kind === "stderr"), []);
+  // turn.started is recognized and silent; only the genuinely unknown event
+  // is allowed to surface as `other`.
+  const other = events.filter((e) => e.kind === "other");
+  assert.equal(other.length, 1);
+  assert.equal(other[0].raw.type, "turn.interrupted");
+  // The notice still reaches the log.
+  assert.deepEqual(
+    events.filter((e) => e.kind === "log"),
+    [{ kind: "log", message: "Codex notice: shortened" }],
+  );
 });
