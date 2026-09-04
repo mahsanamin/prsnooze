@@ -224,6 +224,11 @@ bin/docker-server gh-login       # once: gh auth (paste a fine-grained PAT)
 
 Then open **http://localhost:8284**. Other commands: `stop`, `restart`, `rebuild`, `logs`, `status`, `ssh`, `url` — all but `url` also work as `npm run docker:<command>`. Logins and cached repos live in docker volumes, so `rebuild` doesn't sign you out.
 
+The image installs exact provider versions from `docker/providers/package-lock.json`.
+Dependabot proposes CLI upgrades as reviewable changes, so rebuilding the same
+commit cannot silently change an adapter's JSON schema. `bin/docker-server
+status` prints the versions actually running in the container.
+
 Runtime data (clones, worktrees, past reviews) lives in `~/.prsnooze/`, outside the project. When it runs as a service, its log is there too, at `~/.prsnooze/logs/server.log`.
 
 ## Configuration

@@ -65,6 +65,11 @@ These rules come from a real `codex exec --json` review, not only a fixture:
 When Codex changes its JSONL schema, update recognition, normalization, and
 fixtures together.
 
+The Docker provider CLIs are exact dependencies in `docker/providers/`. Keep
+that lockfile and its Dependabot entry: an image rebuild at one commit must not
+silently move an adapter to a different CLI schema. Treat a provider bump as an
+adapter compatibility change and run the real-CLI checks below.
+
 ## Claude stream invariants
 
 - `rate_limit_event` is recognized subscription telemetry, not review output.

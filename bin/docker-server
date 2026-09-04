@@ -65,6 +65,11 @@ ensure_running() {
   fi
 }
 
+print_provider_versions() {
+  printf '\n%sprovider versions%s\n' "$BOLD" "$RST"
+  docker exec "$CONTAINER" node bin/provider-versions.js | sed 's/^/  /'
+}
+
 CMD="${1:-help}"
 shift || true
 
@@ -75,6 +80,7 @@ case "$CMD" in
     warning
     docker compose up -d --build
     printf '\n%sup.%s URL: %shttp://localhost:%s%s\n' "$GRN" "$RST" "$BOLD" "${PORT:-8284}" "$RST"
+    print_provider_versions
     printf '%sFirst time?%s run:\n' "$YEL" "$RST"
     printf '  bin/docker-server claude-login\n'
     printf '  bin/docker-server codex-login\n'
@@ -93,6 +99,7 @@ case "$CMD" in
     banner
     warning
     docker compose up -d --build --force-recreate
+    print_provider_versions
     ;;
   ssh|shell)
     ensure_docker
@@ -126,6 +133,9 @@ case "$CMD" in
   status)
     ensure_docker
     docker compose ps
+    if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+      print_provider_versions
+    fi
     ;;
   url)
     printf 'http://localhost:%s\n' "${PORT:-8284}"

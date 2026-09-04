@@ -1,0 +1,8 @@
+{
+  "name": "prsnooze-container-providers",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.260",
+    "@openai/codex": "0.153.2"
+  }
+}

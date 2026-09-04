@@ -23,6 +23,23 @@ updates:
       prefix: deps
       include: scope
 
+  # The Docker image deliberately pins its provider CLIs because their output
+  # schemas are adapter contracts. Updates must arrive as reviewable lockfile
+  # changes instead of appearing silently during an image rebuild.
+  - package-ecosystem: npm
+    directory: /docker/providers
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      provider-cli-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+      include: scope
+
   # The workflows below pin actions by major version; this keeps those current,
   # which matters because a compromised action runs with the repo's token.
   - package-ecosystem: github-actions
@@ -33,8 +50,8 @@ updates:
     commit-message:
       prefix: ci
 
-  # The image ships node + git + gh + Claude Code, so its base image ages into
-  # CVEs like anything else.
+  # The image ships node + git + gh, so its base image ages into CVEs like
+  # anything else. Provider CLIs are handled by the npm entry above.
   - package-ecosystem: docker
     directory: /
     schedule:

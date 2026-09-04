@@ -19,8 +19,12 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && apt-get update && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
-# Review providers (npm-distributed)
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+# Review providers have their own lockfile. A rebuild must not silently move an
+# adapter onto a new CLI schema; Dependabot updates these as reviewable changes.
+COPY docker/providers/package.json docker/providers/package-lock.json /opt/prsnooze-providers/
+RUN npm ci --prefix /opt/prsnooze-providers --omit=dev
+ENV PATH="/opt/prsnooze-providers/node_modules/.bin:${PATH}"
+RUN claude --version && codex --version
 
 # App
 WORKDIR /app

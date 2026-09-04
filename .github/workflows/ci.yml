@@ -52,23 +52,32 @@ jobs:
       - name: use the pinned audit client
         run: npm install --global npm@11.6.2
       - run: npm ci --no-audit
+      - run: npm ci --prefix docker/providers --no-audit
       # Fails the PR on a moderate-or-worse advisory in the resolved tree. Set
       # to `high` if moderate turns out to be too noisy for this repo — but
       # prefer fixing or, when a fix genuinely doesn't exist yet, recording the
       # exception here in the diff where a reviewer can see it.
       - name: npm audit (moderate and above)
         run: |
-          for attempt in 1 2; do
-            if npm audit --audit-level=moderate; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 2 ]; then
-              exit 1
-            fi
-            echo "npm audit failed; retrying once after a registry cooldown"
-            sleep 5
-          done
+          audit_tree() {
+            tree="$1"
+            shift
+            for attempt in 1 2; do
+              if npm audit --audit-level=moderate "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 2 ]; then
+                return 1
+              fi
+              echo "$tree audit failed; retrying once after a registry cooldown"
+              sleep 5
+            done
+          }
+          audit_tree application
+          audit_tree provider-clis --prefix docker/providers
       # Verifies the registry signatures on what was installed, which catches a
       # tampered or unsigned package that `audit` alone would not.
       - name: verify package signatures
-        run: npm audit signatures
+        run: |
+          npm audit signatures
+          npm audit signatures --prefix docker/providers
