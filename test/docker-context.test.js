@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
@@ -47,18 +48,44 @@ function isExcluded(rules, filePath) {
   return excluded;
 }
 
-// Everything git refuses to commit but which exists on this machine. This is
-// the repository's own statement of what is host-local or secret.
-function ignoredButPresent() {
-  return execFileSync("git", ["ls-files", "--others", "--ignored", "--exclude-standard"], {
+// Everything the repository's .gitignore files refuse to commit but which
+// exists on this machine. Global and .git/info excludes are developer-local
+// preferences, not repository policy, so they must not affect this gate.
+function ignoredButPresent({ env = process.env } = {}) {
+  return execFileSync("git", ["ls-files", "--others", "--ignored", "--exclude-per-directory=.gitignore"], {
     cwd: ROOT,
     encoding: "utf8",
+    env,
     maxBuffer: 32 * 1024 * 1024,
   })
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 }
+
+test("the inventory uses repository ignore rules, not a developer's global excludes", () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const localFile = `.global-ignore-fixture-${suffix}`;
+  const globalExcludes = path.join(os.tmpdir(), `prsnooze-global-excludes-${suffix}`);
+
+  fs.writeFileSync(path.join(ROOT, localFile), "test fixture\n");
+  fs.writeFileSync(globalExcludes, `${localFile}\n`);
+
+  try {
+    const inventory = ignoredButPresent({
+      env: {
+        ...process.env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "core.excludesFile",
+        GIT_CONFIG_VALUE_0: globalExcludes,
+      },
+    });
+    assert.equal(inventory.includes(localFile), false);
+  } finally {
+    fs.rmSync(path.join(ROOT, localFile), { force: true });
+    fs.rmSync(globalExcludes, { force: true });
+  }
+});
 
 test("the matcher understands the .dockerignore syntax these rules use", () => {
   const rules = [".git", ".env", ".env.*", "!.env.example", "node_modules", "*.log"];
