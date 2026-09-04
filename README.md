@@ -184,6 +184,49 @@ prsnooze looks for a review playbook in provider-specific project and user locat
 
 Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](docs/provider-adapters.md).
 
+## Reach your team's other instances from the terminal
+
+If five people on your team run prsnooze, `snooze` lets you use all five without
+opening a browser. Ask who has a review slot free, hand a PR to whoever does, and
+resume that review later from the same terminal.
+
+```sh
+snooze token $TEAM_TOKEN                  # once: the shared secret
+snooze add http://sara-mac:8383           # once per colleague
+snooze status                             # who can take work right now
+snooze review https://github.com/o/r/pull/7
+snooze resume 01a06b8a/job-9f8e           # after the author replies
+```
+
+`snooze status` prints the thing you actually want to know:
+
+```
+sara  01a06b8a  slot free (0/2 running)
+  http://sara-mac:8383
+  host sara (posts as @sara-gh)
+  providers claude, codex (default claude)
+
+1 of 1 instance has a slot free.
+```
+
+**The host has to switch this on.** Set `PRSNOOZE_REMOTE_TOKEN` in their `.env`
+and restart. Until then the instance answers `503` on those routes and stays
+local-only, which is the default. The browser page is unaffected either way, so
+sharing the URL over your LAN keeps working exactly as before.
+
+**Know what you are spending.** A review runs on the machine you send it to. It
+spends *that* host's Claude or Codex plan and posts the review under *their*
+GitHub identity. That is the point, since a team's idle plans get used instead of
+one person's, but it is never hidden: `snooze add` and `snooze review` both print
+whose account will sign the review. Anyone with the token can queue work on your
+machine, so treat it like a password you are sharing deliberately.
+
+A ref like `01a06b8a/job-9f8e` names the instance that holds the review session,
+not your local nickname for it, so it means the same review in everyone's CLI and
+`snooze resume` always goes back to the machine that ran the original. Resuming
+goes through the same gate as the button on the page: if nothing changed since the
+last look it says so and refuses, and tells you that `--force` would override it.
+
 ## Someone replied to the review — now what
 
 Open the finished review and press **Resume review**. It continues the same provider session, so it already knows what it said the first time. A Claude review always resumes in Claude and a Codex review always resumes in Codex.
@@ -245,6 +288,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `CONFIDENCE_THRESHOLD` | `80` | Drop findings below this confidence. `0` = show everything. |
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
 | `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). |
+| `PRSNOOZE_REMOTE_TOKEN` | *unset* | Shared secret for the `snooze` CLI's cross-instance API. Unset keeps the instance local-only. |
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
 | `REVIEW_PROVIDERS` | `claude,codex` | Provider adapters to offer when their CLI is installed. |
 | `DEFAULT_REVIEW_PROVIDER` | `claude` | Initially selected reviewer. |

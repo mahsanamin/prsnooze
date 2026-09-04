@@ -1,0 +1,414 @@
+#!/usr/bin/env node
+"use strict";
+
+// snooze — reach the prsnooze instances your team is running.
+//
+// Point it at a colleague's instance once, then ask who has a review slot free
+// and hand a PR to whoever does, without leaving your terminal.
+//
+// The thing to understand before using it: a review runs on the machine you
+// send it to. It spends THAT host's Claude or Codex plan and posts the review
+// under THEIR GitHub identity. That is the point (a team's idle plans get
+// used), but it is never hidden — every dispatch prints whose identity will
+// sign the review.
+
+const {
+  readConfig,
+  writeConfig,
+  normalizeUrl,
+  findPeer,
+  parseRef,
+  configPath,
+} = require("../lib/snooze-config");
+const { getStatus, postReview, getJob, postResume } = require("../lib/snooze-client");
+
+const c = process.stdout.isTTY
+  ? {
+      reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
+      red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m", cyan: "\x1b[36m",
+    }
+  : { reset: "", bold: "", dim: "", red: "", green: "", yellow: "", cyan: "" };
+
+function die(msg, code = 1) {
+  process.stderr.write(`${c.red}${msg}${c.reset}\n`);
+  process.exit(code);
+}
+
+function parseFlags(argv) {
+  const flags = {};
+  const rest = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--force") flags.force = true;
+    else if (a === "--usage") flags.usage = true;
+    else if (a === "--json") flags.json = true;
+    else if (a === "--any") flags.any = true;
+    else if (a === "--peer" || a === "-p") flags.peer = argv[++i];
+    else if (a === "--provider") flags.provider = argv[++i];
+    else if (a === "--name" || a === "-n") flags.name = argv[++i];
+    else if (a === "--token" || a === "-t") flags.token = argv[++i];
+    else if (a.startsWith("-")) throw new Error(`unknown flag: ${a}`);
+    else rest.push(a);
+  }
+  return { flags, rest };
+}
+
+// ---------------------------------------------------------------- rendering ---
+
+function slotLabel(status) {
+  const s = status.slots || {};
+  if (!s.capacity) return `${c.dim}unknown${c.reset}`;
+  const busy = `${s.running}/${s.capacity} running`;
+  const queued = s.queued ? `, ${s.queued} queued` : "";
+  return s.available
+    ? `${c.green}slot free${c.reset} ${c.dim}(${busy}${queued})${c.reset}`
+    : `${c.yellow}busy${c.reset} ${c.dim}(${busy}${queued})${c.reset}`;
+}
+
+function usageLabel(status) {
+  const u = status.usage;
+  if (!u) return "";
+  if (!u.ok) return `  ${c.dim}plan: not reported${c.reset}`;
+  const w = Array.isArray(u.windows) ? u.windows[0] : null;
+  if (!w) return `  ${c.dim}plan: no limits reported${c.reset}`;
+  const left = Number.isFinite(w.left) ? `${w.left}% left` : "unknown";
+  return `  ${c.dim}plan: ${left}${w.resetsAt ? `, resets ${w.resetsAt}` : ""}${c.reset}`;
+}
+
+function printPeerStatus(peer, status) {
+  const providers = (status.providers || []).map((p) => p.id).join(", ") || "none";
+  console.log(
+    `${c.bold}${peer.name || status.instance?.name || peer.url}${c.reset} ` +
+      `${c.dim}${status.instance?.shortId || "?"}${c.reset}  ${slotLabel(status)}`,
+  );
+  console.log(`  ${c.dim}${peer.url}${c.reset}`);
+  console.log(
+    `  host ${status.host || "?"}${status.hostLogin ? ` ${c.dim}(posts as @${status.hostLogin})${c.reset}` : ""}`,
+  );
+  console.log(`  providers ${providers}${status.defaultProvider ? ` ${c.dim}(default ${status.defaultProvider})${c.reset}` : ""}`);
+  const usage = usageLabel(status);
+  if (usage) console.log(usage);
+}
+
+// ----------------------------------------------------------------- commands ---
+
+async function cmdAdd(rest, flags) {
+  const url = normalizeUrl(rest[0]);
+  const config = readConfig();
+  if (flags.token) config.token = config.token || flags.token;
+
+  const probe = { name: flags.name || null, url, token: flags.token || null };
+  let status;
+  try {
+    status = await getStatus(probe, config);
+  } catch (e) {
+    // Refusing to add an unverified peer keeps the peer list meaningful: every
+    // entry is one that answered at least once, so a later failure is news.
+    die(
+      `could not reach ${url}: ${e.message}\n` +
+        `${c.dim}The host must set PRSNOOZE_REMOTE_TOKEN and restart, and you need the same token.${c.reset}`,
+    );
+  }
+
+  const name = flags.name || status.instance?.name || new URL(url).hostname;
+  const entry = {
+    name,
+    url,
+    instanceId: status.instance?.id || null,
+    shortId: status.instance?.shortId || null,
+    ...(flags.token ? { token: flags.token } : {}),
+  };
+  config.peers = config.peers.filter((p) => p.url !== url && p.name !== name).concat(entry);
+  writeConfig(config);
+
+  console.log(`${c.green}added${c.reset} ${c.bold}${name}${c.reset} ${c.dim}${entry.shortId}${c.reset}`);
+  printPeerStatus(entry, status);
+  if (status.hostLogin) {
+    console.log(
+      `\n${c.yellow}Reviews you send here post as @${status.hostLogin} and spend their plan.${c.reset}`,
+    );
+  }
+}
+
+function cmdPeers(_rest, flags) {
+  const config = readConfig();
+  if (flags.json) return console.log(JSON.stringify(config.peers, null, 2));
+  if (!config.peers.length) {
+    console.log(`no peers yet. add one with ${c.bold}snooze add http://host:8383${c.reset}`);
+    return;
+  }
+  for (const p of config.peers) {
+    console.log(`${c.bold}${p.name}${c.reset} ${c.dim}${p.shortId || "?"}${c.reset}  ${p.url}${p.token ? ` ${c.dim}(own token)${c.reset}` : ""}`);
+  }
+  console.log(`\n${c.dim}${configPath()}${c.reset}`);
+}
+
+function cmdRemove(rest) {
+  const config = readConfig();
+  const peer = findPeer(config, rest[0]);
+  if (!peer) die(`no such peer: ${rest[0]}`);
+  config.peers = config.peers.filter((p) => p !== peer);
+  writeConfig(config);
+  console.log(`${c.green}removed${c.reset} ${peer.name}`);
+}
+
+function cmdToken(rest) {
+  if (!rest[0]) die("usage: snooze token <shared-token>");
+  const config = readConfig();
+  config.token = rest[0];
+  writeConfig(config);
+  console.log(`${c.green}saved${c.reset} the shared token to ${c.dim}${configPath()}${c.reset}`);
+}
+
+async function cmdStatus(rest, flags) {
+  const config = readConfig();
+  const targets = rest[0] || flags.peer
+    ? [findPeer(config, rest[0] || flags.peer)].filter(Boolean)
+    : config.peers;
+  if (!targets.length) die(rest[0] ? `no such peer: ${rest[0]}` : "no peers yet; add one with `snooze add <url>`");
+
+  const results = await Promise.all(
+    targets.map(async (peer) => {
+      try {
+        return { peer, status: await getStatus(peer, config, { usage: !!flags.usage }) };
+      } catch (e) {
+        return { peer, error: e };
+      }
+    }),
+  );
+
+  if (flags.json) {
+    return console.log(JSON.stringify(
+      results.map(({ peer, status, error }) => ({ peer: peer.name, url: peer.url, status: status || null, error: error?.message || null })),
+      null, 2,
+    ));
+  }
+
+  results.forEach(({ peer, status, error }, i) => {
+    if (i) console.log("");
+    if (error) {
+      console.log(`${c.bold}${peer.name}${c.reset}  ${c.red}${error.message}${c.reset}`);
+      console.log(`  ${c.dim}${peer.url}${c.reset}`);
+    } else {
+      printPeerStatus(peer, status);
+    }
+  });
+
+  const free = results.filter((r) => r.status?.slots?.available);
+  if (!flags.peer && !rest[0]) {
+    console.log(
+      `\n${free.length ? c.green : c.yellow}${free.length}${c.reset} of ${results.length} ` +
+        `${results.length === 1 ? "instance has" : "instances have"} a slot free.`,
+    );
+  }
+}
+
+// Pick who gets the work. Explicit peer wins; --any picks the emptiest queue so
+// a mid-coding-session dispatch does not sit behind someone else's review.
+async function chooseTarget(config, flags) {
+  if (flags.peer) {
+    const peer = findPeer(config, flags.peer);
+    if (!peer) throw new Error(`no such peer: ${flags.peer}`);
+    return { peer, status: await getStatus(peer, config) };
+  }
+  if (!config.peers.length) throw new Error("no peers yet; add one with `snooze add <url>`");
+  if (config.peers.length === 1 && !flags.any) {
+    const peer = config.peers[0];
+    return { peer, status: await getStatus(peer, config) };
+  }
+
+  const probed = (
+    await Promise.all(
+      config.peers.map(async (peer) => {
+        try {
+          return { peer, status: await getStatus(peer, config) };
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter(Boolean);
+  if (!probed.length) throw new Error("no peer answered");
+
+  const ranked = probed.sort((a, b) => {
+    const av = a.status.slots?.available ? 0 : 1;
+    const bv = b.status.slots?.available ? 0 : 1;
+    if (av !== bv) return av - bv;
+    return (a.status.slots?.queued || 0) - (b.status.slots?.queued || 0);
+  });
+  if (!flags.any && !ranked[0].status.slots?.available) {
+    throw new Error(
+      "every instance is busy. re-run with --any to queue on the shortest one, or name a peer with --peer",
+    );
+  }
+  return ranked[0];
+}
+
+async function cmdReview(rest, flags) {
+  const prUrl = rest[0];
+  if (!prUrl) die("usage: snooze review <pr-url> [--peer <name>] [--provider claude|codex] [--any]");
+  const config = readConfig();
+
+  let target;
+  try {
+    target = await chooseTarget(config, flags);
+  } catch (e) {
+    die(e.message);
+  }
+  const { peer, status } = target;
+
+  let result;
+  try {
+    result = await postReview(peer, config, { prUrl, provider: flags.provider || null });
+  } catch (e) {
+    die(`${peer.name} refused: ${e.message}`);
+  }
+
+  if (flags.json) return console.log(JSON.stringify(result, null, 2));
+  console.log(`${c.green}queued${c.reset} on ${c.bold}${peer.name}${c.reset} using ${c.cyan}${result.provider}${c.reset}`);
+  console.log(`  ref  ${c.bold}${result.ref}${c.reset}`);
+  console.log(`  ${c.dim}${peer.url}/#${result.jobId}${c.reset}`);
+  if (status.hostLogin) {
+    console.log(`  ${c.yellow}posts as @${status.hostLogin}, on their plan${c.reset}`);
+  }
+  console.log(`\n${c.dim}watch it:  snooze job ${result.ref}${c.reset}`);
+}
+
+function resolveRefPeer(config, ref) {
+  const { peer: key, jobId } = parseRef(ref);
+  const peer = findPeer(config, key);
+  if (!peer) {
+    throw new Error(
+      `ref names instance "${key}", which is not in your peer list. add it with \`snooze add <url>\`.`,
+    );
+  }
+  return { peer, jobId };
+}
+
+async function cmdJob(rest, flags) {
+  if (!rest[0]) die("usage: snooze job <instance>/<job-id>");
+  const config = readConfig();
+  let peer;
+  let jobId;
+  try {
+    ({ peer, jobId } = resolveRefPeer(config, rest[0]));
+  } catch (e) {
+    die(e.message);
+  }
+
+  let job;
+  try {
+    job = await getJob(peer, config, jobId);
+  } catch (e) {
+    die(`${peer.name}: ${e.message}`);
+  }
+
+  if (flags.json) return console.log(JSON.stringify(job, null, 2));
+  const state = job.state === "done" ? c.green : job.state === "failed" ? c.red : c.yellow;
+  console.log(`${c.bold}${job.ref}${c.reset}  ${state}${job.state}${c.reset}${job.phase ? ` ${c.dim}(${job.phase})${c.reset}` : ""}`);
+  console.log(`  ${job.prUrl}`);
+  if (job.title) console.log(`  ${c.dim}${job.title}${c.reset}`);
+  console.log(`  provider ${job.provider}${job.outcome ? `  outcome ${c.bold}${job.outcome}${c.reset}` : ""}`);
+  if (job.error) console.log(`  ${c.red}${job.error}${c.reset}`);
+  if (job.state === "done" && job.hasSession) {
+    console.log(`\n${c.dim}author replied? re-check it:  snooze resume ${job.ref}${c.reset}`);
+  } else if (job.state === "done" && !job.hasSession) {
+    console.log(`\n${c.dim}no session recorded, so this one cannot be resumed.${c.reset}`);
+  }
+}
+
+async function cmdResume(rest, flags) {
+  if (!rest[0]) die("usage: snooze resume <instance>/<job-id> [--force]");
+  const config = readConfig();
+  let peer;
+  let jobId;
+  try {
+    ({ peer, jobId } = resolveRefPeer(config, rest[0]));
+  } catch (e) {
+    die(e.message);
+  }
+
+  try {
+    const result = await postResume(peer, config, jobId, { force: !!flags.force });
+    if (flags.json) return console.log(JSON.stringify(result, null, 2));
+    console.log(`${c.green}resuming${c.reset} ${c.bold}${rest[0]}${c.reset} on ${peer.name}`);
+    if (result.reason) console.log(`  ${c.dim}${result.reason}${c.reset}`);
+    console.log(`\n${c.dim}watch it:  snooze job ${rest[0]}${c.reset}`);
+  } catch (e) {
+    // The gate refusing is the normal, useful answer, not a crash: it means
+    // nothing changed since the last look. Say what would override it.
+    if (e.status === 409 && e.forcible) {
+      process.stderr.write(`${c.yellow}${e.message}${c.reset}\n`);
+      process.stderr.write(`${c.dim}re-run with --force if you want it re-checked anyway.${c.reset}\n`);
+      process.exit(2);
+    }
+    die(`${peer.name} refused: ${e.message}`);
+  }
+}
+
+function cmdHelp() {
+  console.log(`${c.bold}snooze${c.reset} — reach the prsnooze instances your team is running
+
+${c.bold}peers${c.reset}
+  ${c.green}add${c.reset} <url> [--name n] [--token t]   add an instance (verifies it answers first)
+  ${c.green}peers${c.reset}                              list what you have added
+  ${c.green}remove${c.reset} <name>                      forget one
+  ${c.green}token${c.reset} <shared-token>               save the team's shared token
+
+${c.bold}using them${c.reset}
+  ${c.green}status${c.reset} [name] [--usage]            who is free right now
+  ${c.green}review${c.reset} <pr-url> [--peer n]         hand a PR to a free instance
+                 [--provider claude|codex] [--any]
+  ${c.green}job${c.reset} <ref>                          how is that review doing
+  ${c.green}resume${c.reset} <ref> [--force]             re-check after the author replied
+
+${c.bold}anywhere${c.reset}
+  --json    machine-readable output
+
+A ref looks like ${c.bold}a1b2c3d4/9f8e...${c.reset} and names the instance that holds the
+review session, so resume always goes back to the machine that ran it.
+
+${c.yellow}A review runs on the machine you send it to.${c.reset} It spends that host's Claude or
+Codex plan and posts under their GitHub identity. Every dispatch says whose.
+
+The host enables this with ${c.bold}PRSNOOZE_REMOTE_TOKEN${c.reset} in their .env. Without it
+their instance answers 503 and stays local-only.`);
+}
+
+// --------------------------------------------------------------------- main ---
+
+const COMMANDS = {
+  add: cmdAdd,
+  peers: cmdPeers,
+  list: cmdPeers,
+  remove: cmdRemove,
+  rm: cmdRemove,
+  token: cmdToken,
+  status: cmdStatus,
+  review: cmdReview,
+  job: cmdJob,
+  resume: cmdResume,
+  help: cmdHelp,
+};
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const name = argv[0];
+  if (!name || name === "-h" || name === "--help" || name === "help") return cmdHelp();
+  if (name === "-v" || name === "--version") {
+    return console.log(require("../package.json").version);
+  }
+  const command = COMMANDS[name];
+  if (!command) {
+    die(`unknown command: ${name}\nrun \`snooze help\` for the list.`);
+  }
+  let parsed;
+  try {
+    parsed = parseFlags(argv.slice(1));
+  } catch (e) {
+    die(e.message);
+  }
+  await command(parsed.rest, parsed.flags);
+}
+
+main().catch((e) => die(e.stack || e.message));

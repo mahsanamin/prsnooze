@@ -6,7 +6,8 @@
   "type": "commonjs",
   "bin": {
     "prsnooze": "bin/start.js",
-    "prsnooze-service": "bin/prsnooze-service"
+    "prsnooze-service": "bin/prsnooze-service",
+    "snooze": "bin/snooze"
   },
   "scripts": {
     "start": "node bin/start.js",
@@ -30,7 +31,8 @@
     "docker:codex-login": "bin/docker-server codex-login",
     "docker:gh-login": "bin/docker-server gh-login",
     "docker:logs": "bin/docker-server logs",
-    "docker:status": "bin/docker-server status"
+    "docker:status": "bin/docker-server status",
+    "snooze": "bin/snooze"
   },
   "dependencies": {
     "express": "^5.2.1",

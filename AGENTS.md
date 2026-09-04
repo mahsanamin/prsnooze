@@ -45,6 +45,35 @@ adapter contract and AGY checklist are in `docs/provider-adapters.md`.
   is not proof that GitHub accepted a review.
 - Never offer resume when no resumable session ID was recorded.
 
+## Cross-instance invariants
+
+The `snooze` CLI lets one machine queue work on another. That makes remote
+control a security surface, not a convenience feature.
+
+- Remote control is opt-in. With no `PRSNOOZE_REMOTE_TOKEN` set, every
+  `/api/remote/*` route answers 503. Never make it default-on, and never fall
+  back to unauthenticated access.
+- Authenticate before any side effect. No remote route may read job data, queue
+  a review, or resume one before the token check passes.
+- A missing token and a wrong token get the identical answer, with no detail,
+  the same way the approve password behaves.
+- Compare the token in constant time. Do not use `===` on secrets.
+- Do not add auth to the routes the browser page already calls. Sharing that URL
+  over a LAN with no credential is documented behaviour; remote control is the
+  new capability and gets the new namespace.
+- The browser route and the remote route must share one implementation for
+  queueing (`enqueueReview`) and resuming (`resumeReviewJob`). The resume gate,
+  its refusal reasons, and what `force` overrides cannot differ by caller.
+- A review ref is `<instance-short-id>/<job-id>`. It carries the instance id, not
+  the caller's local nickname, so a ref means the same review in every CLI and
+  resume returns to the machine holding the session.
+- An instance id must survive a restart, and must not block startup if it cannot
+  be persisted.
+- Any command that dispatches work must state whose GitHub identity will post the
+  review and whose plan pays for it. Do not quiet that down.
+- Reading plan usage shells out to a provider CLI, so keep it opt-in
+  (`?usage=1`). A status sweep across peers must not pay for it by default.
+
 ## Codex stream invariants
 
 These rules come from a real `codex exec --json` review, not only a fixture:

@@ -15,6 +15,8 @@ const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
 const { createProvider, discoverProvidersSync, providerIds } = require("./lib/providers");
 const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
+const { loadIdentity, shortId } = require("./lib/instance-identity");
+const { createRemoteRouter } = require("./lib/remote-api");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -62,6 +64,13 @@ const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_R
 // path to get right.
 const APPROVE_PASSWORD = process.env.MANUAL_APPROVE_PASSWORD || "";
 
+// Shared secret for the cross-instance API that `bin/snooze` talks to. Unset
+// means the remote API is off, which is the default: reaching those routes
+// spends this host's provider plan and posts a review under their GitHub
+// identity, so it is opt-in rather than something a rebuild switches on.
+const REMOTE_TOKEN = process.env.PRSNOOZE_REMOTE_TOKEN || "";
+const PKG_VERSION = require("./package.json").version;
+
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
 const HOST_NAME = detectHost();
@@ -88,6 +97,10 @@ function detectHost() {
 for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
   fs.mkdirSync(d, { recursive: true });
 }
+
+// The stable name a colleague's CLI reaches this instance by. Read once at
+// boot, after the data dir exists so the first run can persist it.
+const IDENTITY = loadIdentity({ dataHome: DATA_HOME, name: HOST_NAME });
 
 // --- in-memory job state ---
 // jobs: id -> { id, prUrl, createdAt, state, events: [...], prMeta?, worktreePath?, error? }
@@ -379,18 +392,20 @@ function approveSucceeded(ip) {
   approveAttempts.delete(ip);
 }
 
-app.post("/api/review", (req, res) => {
-  const { prUrl } = req.body || {};
-  const provider = String(req.body?.provider || DEFAULT_REVIEW_PROVIDER).toLowerCase();
-  if (!prUrl) return res.status(400).json({ error: "prUrl is required" });
+// Queue one review. Shared by the browser route and the remote API so the two
+// can never drift on what counts as a valid submission, which provider a job
+// lands on, or what gets persisted.
+function enqueueReview({ prUrl, provider: requested } = {}) {
+  const provider = String(requested || DEFAULT_REVIEW_PROVIDER).toLowerCase();
+  if (!prUrl) throw httpError(400, "prUrl is required");
   if (!PROVIDERS.has(provider)) {
-    return res.status(400).json({ error: `review provider is not available: ${provider}` });
+    throw httpError(400, `review provider is not available: ${provider}`, "UNKNOWN_PROVIDER");
   }
   let parsed;
   try {
     parsed = parsePrUrl(prUrl);
   } catch (e) {
-    return res.status(400).json({ error: e.message });
+    throw httpError(400, e.message, "BAD_PR_URL");
   }
   const id = uuidv4();
   const job = {
@@ -405,7 +420,23 @@ app.post("/api/review", (req, res) => {
   jobs.set(id, job);
   persistJob(job);
   queue.enqueue(job);
-  res.status(202).json({ jobId: id, prUrl: parsed.url, provider });
+  return { jobId: id, prUrl: parsed.url, provider };
+}
+
+function httpError(status, message, code = undefined) {
+  const err = new Error(message);
+  err.status = status;
+  if (code) err.code = code;
+  return err;
+}
+
+app.post("/api/review", (req, res) => {
+  try {
+    const result = enqueueReview({ prUrl: req.body?.prUrl, provider: req.body?.provider });
+    res.status(202).json(result);
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message });
+  }
 });
 
 // Coarse per-job shape for the list view (the WS snapshot and /api/jobs share
@@ -589,15 +620,22 @@ function isJobActive(job) {
 
 // Resume: re-run this job by resuming its original provider session to
 // check whether the author addressed the review's comments. No new session.
-app.post("/api/jobs/:id/verify", async (req, res) => {
-  const job = jobs.get(req.params.id);
-  if (!job) return res.status(404).json({ error: "not found" });
+// Resume one finished review. Shared by the browser route and the remote API:
+// the gate, the refusal reasons and what `force` may override have to be
+// identical whether a person clicked the button or a colleague's CLI asked.
+async function resumeReviewJob(jobId, { force = false } = {}) {
+  const job = jobs.get(jobId);
+  if (!job) throw httpError(404, "not found", "NOT_FOUND");
   const sessionId = reviewSessionId(job);
   if (!sessionId) {
-    return res.status(400).json({ error: "no provider session recorded for this review; run a fresh review instead" });
+    throw httpError(
+      400,
+      "no provider session recorded for this review; run a fresh review instead",
+      "NO_SESSION",
+    );
   }
   if (isJobActive(job)) {
-    return res.status(409).json({ error: "this review is already running" });
+    throw httpError(409, "this review is already running", "ALREADY_RUNNING");
   }
   // Don't burn a provider session on a PR that's already approved or untouched
   // since the last look — but that's advice, not a veto: `force` overrides it,
@@ -613,9 +651,12 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   } catch (e) {
     assessment = { resumable: false, code: "UNKNOWN", reason: `Couldn't check the PR: ${e.message}`, signals: {} };
   }
-  const gate = resumeGate({ assessment, forced: !!req.body?.force });
+  const gate = resumeGate({ assessment, forced: !!force });
   if (!gate.allow) {
-    return res.status(409).json({ error: gate.reason, assessment, forcible: gate.forcible });
+    const err = httpError(409, gate.reason, "NOT_RESUMABLE");
+    err.assessment = assessment;
+    err.forcible = gate.forcible;
+    throw err;
   }
   job.resumeReason = gate.reason;
   job.mode = "verify";
@@ -631,7 +672,20 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   });
   persistJob(job);
   queue.enqueue(job);
-  res.json({ ok: true });
+  return { ok: true, jobId: job.id, provider: job.provider || "claude", reason: job.resumeReason || null };
+}
+
+app.post("/api/jobs/:id/verify", async (req, res) => {
+  try {
+    const result = await resumeReviewJob(req.params.id, { force: !!req.body?.force });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 400).json({
+      error: e.message,
+      assessment: e.assessment,
+      forcible: e.forcible,
+    });
+  }
 });
 
 // Approve the PR. The browser can't run `gh`, so the server shells out to it
@@ -752,6 +806,61 @@ function attachWebSocket(srv) {
 // in practice means the tests. It used to be gated on `require.main === module`
 // — but bin/start.js *requires* this file rather than running it, so `npm start`
 // (the way anyone actually starts prsnooze) printed no summary at all.
+// --- the cross-instance API -----------------------------------------------
+// What another machine's `snooze` CLI talks to. Mounted last so it can lean on
+// enqueueReview and resumeReviewJob rather than restating either.
+
+// Slot arithmetic is the thing a colleague actually asks about ("can you take a
+// review right now"), so it is computed here instead of in every client. Plan
+// usage is deliberately opt-in via ?usage=1: reading it shells out to the
+// provider CLI, and `snooze status` across five peers should not pay that.
+async function describeInstance({ includeUsage = false } = {}) {
+  const q = queue.status();
+  const free = Math.max(0, q.concurrency - q.running);
+  const detail = {
+    host: HOST_NAME,
+    hostLogin: HOST_LOGIN,
+    version: PKG_VERSION,
+    providers: providerList.map(({ id, label }) => ({ id, label })),
+    defaultProvider: DEFAULT_REVIEW_PROVIDER,
+    slots: {
+      capacity: q.concurrency,
+      running: q.running,
+      queued: q.pending.length,
+      free,
+      available: free > 0,
+    },
+  };
+  if (includeUsage) {
+    const provider = PROVIDERS.get(DEFAULT_REVIEW_PROVIDER);
+    detail.usage = provider?.getUsage
+      ? await provider.getUsage({ bin: provider.bin, model: provider.model }).catch(() => ({ ok: false, reason: "unavailable" }))
+      : { ok: false, reason: "unsupported-by-provider" };
+  }
+  return detail;
+}
+
+app.use(
+  "/api/remote",
+  createRemoteRouter({
+    token: REMOTE_TOKEN,
+    identity: IDENTITY,
+    describe: ({ includeUsage } = {}) => describeInstance({ includeUsage }),
+    submitReview: ({ prUrl, provider }) => enqueueReview({ prUrl, provider }),
+    describeJob: (id) => {
+      const job = jobs.get(id);
+      if (!job) return null;
+      return {
+        ...jobListItem(job),
+        // Whether resume is even possible, so the CLI can say so before asking.
+        hasSession: !!reviewSessionId(job),
+        error: job.error || null,
+      };
+    },
+    resumeReview: (id, opts) => resumeReviewJob(id, opts),
+  }),
+);
+
 function start(port = PORT, { banner = false } = {}) {
   // Restore past jobs from disk and reconcile anything left mid-flight by a
   // previous server that crashed or was restarted. Must run before we listen.
