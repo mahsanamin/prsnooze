@@ -5,7 +5,12 @@ const assert = require("node:assert");
 const express = require("express");
 const http = require("node:http");
 
-const { createRemoteRouter, secretsMatch } = require("../lib/remote-api");
+const {
+  createRemoteRouter,
+  createAttemptLimiter,
+  requesterRecord,
+  secretsMatch,
+} = require("../lib/remote-api");
 
 const TOKEN = "team-secret-token";
 const IDENTITY = { id: "01a06b8a-ea9a-7432-9b57-42a1c1563282", name: "ahsan" };
@@ -13,7 +18,6 @@ const IDENTITY = { id: "01a06b8a-ea9a-7432-9b57-42a1c1563282", name: "ahsan" };
 function serve({ token = TOKEN, overrides = {} } = {}) {
   const calls = { review: [], resume: [] };
   const app = express();
-  app.use(express.json());
   app.use(
     "/api/remote",
     createRemoteRouter({
@@ -61,7 +65,11 @@ const call = async (base, path, { token = TOKEN, method = "GET", body = null, he
   if (token !== null) headers[header] = header === "Authorization" ? `Bearer ${token}` : token;
   if (body) headers["Content-Type"] = "application/json";
   const res = await fetch(`${base}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  return { status: res.status, body: await res.json().catch(() => null) };
+  return {
+    status: res.status,
+    retryAfter: res.headers.get("retry-after"),
+    body: await res.json().catch(() => null),
+  };
 };
 
 test("an instance with no token configured refuses remote control outright", async () => {
@@ -91,6 +99,30 @@ test("a missing and a wrong token get the same answer, with no detail", async ()
   }
 });
 
+test("repeated token failures lock that source without testing the correct token", async () => {
+  let now = 1_000;
+  const authLimiter = createAttemptLimiter({
+    maxFails: 2,
+    baseLockMs: 10_000,
+    maxLockMs: 10_000,
+    now: () => now,
+  });
+  const s = await serve({ overrides: { authLimiter } });
+  try {
+    assert.equal((await call(s.base, "/status", { token: "wrong-1" })).status, 401);
+    assert.equal((await call(s.base, "/status", { token: "wrong-2" })).status, 401);
+    const blocked = await call(s.base, "/status");
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body.code, "RATE_LIMITED");
+    assert.equal(blocked.retryAfter, "10");
+
+    now += 10_001;
+    assert.equal((await call(s.base, "/status")).status, 200);
+  } finally {
+    await s.close();
+  }
+});
+
 test("no route leaks anything before the token is checked", async () => {
   const s = await serve();
   try {
@@ -100,6 +132,22 @@ test("no route leaks anything before the token is checked", async () => {
     }
     assert.deepEqual(s.calls.review, [], "an unauthorized request must never reach the queue");
     assert.deepEqual(s.calls.resume, []);
+  } finally {
+    await s.close();
+  }
+});
+
+test("authentication runs before parsing an invalid JSON body", async () => {
+  const s = await serve();
+  try {
+    const res = await fetch(`${s.base}/review`, {
+      method: "POST",
+      headers: { Authorization: "Bearer wrong", "Content-Type": "application/json" },
+      body: "{not-json",
+    });
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "unauthorized", code: "UNAUTHORIZED" });
+    assert.deepEqual(s.calls.review, []);
   } finally {
     await s.close();
   }
@@ -148,14 +196,17 @@ test("a queued review comes back with a portable ref naming the instance", async
   try {
     const res = await call(s.base, "/review", {
       method: "POST",
-      body: { prUrl: "https://github.com/o/r/pull/1", provider: "codex" },
+      body: { prUrl: "https://github.com/o/r/pull/1", provider: "codex", requester: "alice@laptop" },
     });
     assert.equal(res.status, 202);
     // The ref carries the instance short id, not the caller's nickname, so it
     // means the same review in every colleague's CLI.
     assert.equal(res.body.ref, "01a06b8a/job-1");
     assert.equal(res.body.provider, "codex");
-    assert.deepEqual(s.calls.review, [{ prUrl: "https://github.com/o/r/pull/1", provider: "codex" }]);
+    assert.equal(res.body.requestedBy.label, "alice@laptop");
+    assert.match(res.body.requestedBy.address, /127\.0\.0\.1/);
+    assert.equal(s.calls.review[0].requestedBy.label, "alice@laptop");
+    assert.match(s.calls.review[0].requestedBy.address, /127\.0\.0\.1/);
   } finally {
     await s.close();
   }
@@ -197,12 +248,23 @@ test("a job report says whether resume is even possible", async () => {
 test("resume reaches the same gate the browser uses, and force is passed through", async () => {
   const s = await serve();
   try {
-    await call(s.base, "/jobs/job-1/resume", { method: "POST", body: {} });
-    await call(s.base, "/jobs/job-1/resume", { method: "POST", body: { force: true } });
-    assert.deepEqual(s.calls.resume, [
-      { id: "job-1", force: false },
-      { id: "job-1", force: true },
+    await call(s.base, "/jobs/job-1/resume", {
+      method: "POST",
+      body: { requester: "alice@laptop" },
+    });
+    await call(s.base, "/jobs/job-1/resume", {
+      method: "POST",
+      body: { force: true, requester: "alice@laptop" },
+    });
+    assert.deepEqual(s.calls.resume.map(({ id, force, requestedBy }) => ({
+      id,
+      force,
+      label: requestedBy.label,
+    })), [
+      { id: "job-1", force: false, label: "alice@laptop" },
+      { id: "job-1", force: true, label: "alice@laptop" },
     ]);
+    assert.match(s.calls.resume[0].requestedBy.address, /127\.0\.0\.1/);
   } finally {
     await s.close();
   }
@@ -238,4 +300,13 @@ test("token comparison does not depend on length or content shortcuts", () => {
   assert.equal(secretsMatch("", ""), false);
   assert.equal(secretsMatch(null, "abc"), false);
   assert.equal(secretsMatch("abc", undefined), false);
+});
+
+test("requester labels are bounded and cannot inject control characters", () => {
+  assert.deepEqual(requesterRecord("  alice\n@laptop  ", "127.0.0.1"), {
+    label: "alice@laptop",
+    address: "127.0.0.1",
+  });
+  assert.equal(requesterRecord("x".repeat(500), "host").label.length, 200);
+  assert.equal(requesterRecord("", "host").label, "unspecified");
 });

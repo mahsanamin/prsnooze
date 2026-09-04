@@ -221,6 +221,14 @@ one person's, but it is never hidden: `snooze add` and `snooze review` both prin
 whose account will sign the review. Anyone with the token can queue work on your
 machine, so treat it like a password you are sharing deliberately.
 
+The CLI records a self-asserted requester label (by default
+`<local-user>@<hostname>`) and the source address on every remotely dispatched
+review or resume. Set `SNOOZE_REQUESTER` if the default is not meaningful. Because the team
+uses one shared token, this is an audit hint, not cryptographic proof of who
+made the request. Use HTTPS for peer URLs unless the connection already travels
+inside an encrypted private network such as Tailscale; `snooze add` warns when
+you configure plain HTTP to a non-local address.
+
 A ref like `01a06b8a/job-9f8e` names the instance that holds the review session,
 not your local nickname for it, so it means the same review in everyone's CLI and
 `snooze resume` always goes back to the machine that ran the original. Resuming

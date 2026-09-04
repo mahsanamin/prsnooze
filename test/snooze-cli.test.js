@@ -23,7 +23,6 @@ const INSTANCE = { id: "01a06b8a-ea9a-7432-9b57-42a1c1563282", name: "sara" };
 function fakeInstance({ available = true } = {}) {
   const calls = { review: [], resume: [] };
   const app = express();
-  app.use(express.json());
   app.use(
     "/api/remote",
     createRemoteRouter({
@@ -42,7 +41,17 @@ function fakeInstance({ available = true } = {}) {
       },
       describeJob: (id) =>
         id === "job-9"
-          ? { id: "job-9", state: "done", provider: "codex", outcome: "commented", hasSession: true, prUrl: "https://github.com/o/r/pull/7", title: "Add a thing" }
+          ? {
+              id: "job-9",
+              state: "done",
+              provider: "codex",
+              outcome: "commented",
+              hasSession: true,
+              prUrl: "https://github.com/o/r/pull/7",
+              title: "Add a thing",
+              requestedBy: { label: "test-client", address: "127.0.0.1" },
+              lastResumeRequestedBy: { label: "reviewer-two", address: "127.0.0.2" },
+            }
           : null,
       resumeReview: async (id, opts) => {
         calls.resume.push({ id, ...opts });
@@ -66,7 +75,12 @@ function session() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "snooze-cli-"));
   const run = (...args) =>
     execFileP(process.execPath, [CLI, ...args], {
-      env: { ...process.env, SNOOZE_HOME: home, NO_COLOR: "1" },
+      env: {
+        ...process.env,
+        SNOOZE_HOME: home,
+        SNOOZE_REQUESTER: "test-client",
+        NO_COLOR: "1",
+      },
     });
   return { home, run };
 }
@@ -90,6 +104,18 @@ test("a peer resolves by nickname or by the instance id a ref carries", () => {
   assert.equal(findPeer(config, "01a06b8a")?.name, "sara");
   assert.equal(findPeer(config, "http://h:1")?.name, "sara");
   assert.equal(findPeer(config, "nobody"), null);
+});
+
+test("a colliding short id is ambiguous instead of routing to the first peer", () => {
+  const config = {
+    token: null,
+    peers: [
+      { name: "one", url: "http://one:1", instanceId: "01a06b8a-one", shortId: "01a06b8a" },
+      { name: "two", url: "http://two:1", instanceId: "01a06b8a-two", shortId: "01a06b8a" },
+    ],
+  };
+  assert.throws(() => findPeer(config, "01a06b8a"), /ambiguous peer/);
+  assert.equal(findPeer(config, "one")?.url, "http://one:1");
 });
 
 test("a ref splits into the instance that holds the session and the job", () => {
@@ -190,7 +216,10 @@ test("dispatching a review prints the ref and whose plan pays for it", async () 
     assert.match(stdout, /queued/);
     assert.match(stdout, /01a06b8a\/job-9/);
     assert.match(stdout, /posts as @sara-gh, on their plan/);
-    assert.deepEqual(inst.calls.review, [{ prUrl: "https://github.com/o/r/pull/7", provider: "codex" }]);
+    assert.equal(inst.calls.review[0].prUrl, "https://github.com/o/r/pull/7");
+    assert.equal(inst.calls.review[0].provider, "codex");
+    assert.equal(inst.calls.review[0].requestedBy.label, "test-client");
+    assert.match(inst.calls.review[0].requestedBy.address, /127\.0\.0\.1/);
   } finally {
     await inst.close();
   }
@@ -221,12 +250,17 @@ test("a review ref routes job and resume back to the instance that ran it", asyn
     const job = await run("job", "01a06b8a/job-9");
     assert.match(job.stdout, /done/);
     assert.match(job.stdout, /commented/);
+    assert.match(job.stdout, /requested by test-client \(127\.0\.0\.1\)/);
+    assert.match(job.stdout, /last resumed by reviewer-two \(127\.0\.0\.2\)/);
     assert.match(job.stdout, /snooze resume 01a06b8a\/job-9/);
 
     const resumed = await run("resume", "01a06b8a/job-9");
     assert.match(resumed.stdout, /resuming/);
     assert.match(resumed.stdout, /2 new commits/);
-    assert.deepEqual(inst.calls.resume, [{ id: "job-9", force: false }]);
+    assert.equal(inst.calls.resume[0].id, "job-9");
+    assert.equal(inst.calls.resume[0].force, false);
+    assert.equal(inst.calls.resume[0].requestedBy.label, "test-client");
+    assert.match(inst.calls.resume[0].requestedBy.address, /127\.0\.0\.1/);
   } finally {
     await inst.close();
   }

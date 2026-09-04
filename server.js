@@ -16,7 +16,7 @@ const { runReviewJob, runVerifyJob } = require("./lib/review-job");
 const { createProvider, discoverProvidersSync, providerIds } = require("./lib/providers");
 const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 const { loadIdentity, shortId } = require("./lib/instance-identity");
-const { createRemoteRouter } = require("./lib/remote-api");
+const { createRemoteRouter, createAttemptLimiter } = require("./lib/remote-api");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -193,6 +193,27 @@ queue.on("state", ({ jobId, state }) => {
 
 // --- HTTP ---
 const app = express();
+app.use(
+  "/api/remote",
+  createRemoteRouter({
+    token: REMOTE_TOKEN,
+    identity: IDENTITY,
+    describe: ({ includeUsage } = {}) => describeInstance({ includeUsage }),
+    submitReview: ({ prUrl, provider, requestedBy }) => enqueueReview({ prUrl, provider, requestedBy }),
+    describeJob: (id) => {
+      const job = jobs.get(id);
+      if (!job) return null;
+      return {
+        ...jobListItem(job),
+        // Whether resume is even possible, so the CLI can say so before asking.
+        hasSession: !!reviewSessionId(job),
+        requestedBy: job.requestedBy || null,
+        error: job.error || null,
+      };
+    },
+    resumeReview: (id, opts) => resumeReviewJob(id, opts),
+  }),
+);
 app.use(express.json({ limit: "1mb" }));
 
 // Serve index.html ourselves with a version stamp on the asset URLs. A reverse
@@ -343,59 +364,26 @@ app.get("/api/model", async (_req, res) => {
   res.json(data);
 });
 
-// --- brute-force protection for the one password-gated endpoint ------------
-// Approving is the only place a secret is checked, and it posts to GitHub as the
-// host. Without a limit, anyone who can reach the page can try passwords as fast
-// as the network allows — and the whole point of prsnooze is that the page is
-// reachable by teammates. Asking on every approval doesn't change that; it just
-// means the guess and the action arrive together.
+// --- brute-force protection for the approval endpoint ----------------------
+// Approving posts to GitHub as the host. Without a limit, anyone who can reach
+// the page can try passwords as fast as the network allows. The remote API uses
+// the same limiter implementation inside its router; both secrets get the same
+// bounded-attempt treatment.
 //
 // In-memory and per-IP: this is a single process on one machine, so there is no
 // shared store to coordinate with. Note that behind a reverse proxy every
 // request looks like it comes from the proxy unless `trust proxy` is set, in
 // which case a single attacker can lock the endpoint for everyone. That is the
 // deliberate trade: approve is a rare manual action, and the lockout expires.
-const APPROVE_MAX_FAILS = 5;              // consecutive failures before locking
-const APPROVE_BASE_LOCK_MS = 60_000;      // first lockout, doubling after that
-const APPROVE_MAX_LOCK_MS = 30 * 60_000;  // ceiling
-const APPROVE_FORGET_MS = 60 * 60_000;    // drop idle counters
-const approveAttempts = new Map(); // ip -> { fails, lockedUntil, seen }
-
-function approveThrottle(ip) {
-  const now = Date.now();
-  // Opportunistic prune so a stream of distinct IPs can't grow this forever.
-  if (approveAttempts.size > 1000) {
-    for (const [k, v] of approveAttempts) if (now - v.seen > APPROVE_FORGET_MS) approveAttempts.delete(k);
-  }
-  const rec = approveAttempts.get(ip);
-  if (!rec) return { blocked: false };
-  if (now - rec.seen > APPROVE_FORGET_MS) { approveAttempts.delete(ip); return { blocked: false }; }
-  if (rec.lockedUntil && rec.lockedUntil > now) {
-    return { blocked: true, retryAfterMs: rec.lockedUntil - now };
-  }
-  return { blocked: false };
-}
-
-function approveFailed(ip) {
-  const now = Date.now();
-  const rec = approveAttempts.get(ip) || { fails: 0, lockedUntil: 0, seen: now };
-  rec.fails += 1;
-  rec.seen = now;
-  if (rec.fails >= APPROVE_MAX_FAILS) {
-    const over = rec.fails - APPROVE_MAX_FAILS;
-    rec.lockedUntil = now + Math.min(APPROVE_BASE_LOCK_MS * 2 ** over, APPROVE_MAX_LOCK_MS);
-  }
-  approveAttempts.set(ip, rec);
-}
-
-function approveSucceeded(ip) {
-  approveAttempts.delete(ip);
-}
+const approveLimiter = createAttemptLimiter();
+const approveThrottle = (ip) => approveLimiter.check(ip);
+const approveFailed = (ip) => approveLimiter.failed(ip);
+const approveSucceeded = (ip) => approveLimiter.succeeded(ip);
 
 // Queue one review. Shared by the browser route and the remote API so the two
 // can never drift on what counts as a valid submission, which provider a job
 // lands on, or what gets persisted.
-function enqueueReview({ prUrl, provider: requested } = {}) {
+function enqueueReview({ prUrl, provider: requested, requestedBy = null } = {}) {
   const provider = String(requested || DEFAULT_REVIEW_PROVIDER).toLowerCase();
   if (!prUrl) throw httpError(400, "prUrl is required");
   if (!PROVIDERS.has(provider)) {
@@ -416,6 +404,7 @@ function enqueueReview({ prUrl, provider: requested } = {}) {
     phase: null,
     provider,
     events: [],
+    ...(requestedBy ? { requestedBy } : {}),
   };
   jobs.set(id, job);
   persistJob(job);
@@ -458,6 +447,8 @@ function jobListItem(j) {
     createdAt: j.createdAt,
     finishedAt: j.finishedAt,
     error: j.error,
+    requestedBy: j.requestedBy || null,
+    lastResumeRequestedBy: j.lastResumeRequestedBy || null,
   };
 }
 function jobsSnapshot() {
@@ -623,7 +614,7 @@ function isJobActive(job) {
 // Resume one finished review. Shared by the browser route and the remote API:
 // the gate, the refusal reasons and what `force` may override have to be
 // identical whether a person clicked the button or a colleague's CLI asked.
-async function resumeReviewJob(jobId, { force = false } = {}) {
+async function resumeReviewJob(jobId, { force = false, requestedBy = null } = {}) {
   const job = jobs.get(jobId);
   if (!job) throw httpError(404, "not found", "NOT_FOUND");
   const sessionId = reviewSessionId(job);
@@ -659,6 +650,13 @@ async function resumeReviewJob(jobId, { force = false } = {}) {
     throw err;
   }
   job.resumeReason = gate.reason;
+  if (requestedBy) {
+    job.lastResumeRequestedBy = requestedBy;
+    job.remoteResumeRequests = [
+      ...(Array.isArray(job.remoteResumeRequests) ? job.remoteResumeRequests : []),
+      { requestedBy, at: Date.now() },
+    ].slice(-20);
+  }
   job.mode = "verify";
   job.resumeSessionId = sessionId;
   job.state = "queued";
@@ -807,8 +805,9 @@ function attachWebSocket(srv) {
 // — but bin/start.js *requires* this file rather than running it, so `npm start`
 // (the way anyone actually starts prsnooze) printed no summary at all.
 // --- the cross-instance API -----------------------------------------------
-// What another machine's `snooze` CLI talks to. Mounted last so it can lean on
-// enqueueReview and resumeReviewJob rather than restating either.
+// What another machine's `snooze` CLI talks to. Its router is mounted before
+// the global body parser so authentication happens before request-body work;
+// callbacks still share enqueueReview and resumeReviewJob with the browser.
 
 // Slot arithmetic is the thing a colleague actually asks about ("can you take a
 // review right now"), so it is computed here instead of in every client. Plan
@@ -839,27 +838,6 @@ async function describeInstance({ includeUsage = false } = {}) {
   }
   return detail;
 }
-
-app.use(
-  "/api/remote",
-  createRemoteRouter({
-    token: REMOTE_TOKEN,
-    identity: IDENTITY,
-    describe: ({ includeUsage } = {}) => describeInstance({ includeUsage }),
-    submitReview: ({ prUrl, provider }) => enqueueReview({ prUrl, provider }),
-    describeJob: (id) => {
-      const job = jobs.get(id);
-      if (!job) return null;
-      return {
-        ...jobListItem(job),
-        // Whether resume is even possible, so the CLI can say so before asking.
-        hasSession: !!reviewSessionId(job),
-        error: job.error || null,
-      };
-    },
-    resumeReview: (id, opts) => resumeReviewJob(id, opts),
-  }),
-);
 
 function start(port = PORT, { banner = false } = {}) {
   // Restore past jobs from disk and reconcile anything left mid-flight by a

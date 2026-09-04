@@ -97,6 +97,13 @@ async function cmdAdd(rest, flags) {
   const config = readConfig();
   if (flags.token) config.token = config.token || flags.token;
 
+  const peerUrl = new URL(url);
+  if (peerUrl.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(peerUrl.hostname)) {
+    console.log(
+      `${c.yellow}warning: this HTTP peer sends the shared token without TLS; use HTTPS or an encrypted private network such as Tailscale.${c.reset}`,
+    );
+  }
+
   const probe = { name: flags.name || null, url, token: flags.token || null };
   let status;
   try {
@@ -309,6 +316,12 @@ async function cmdJob(rest, flags) {
   console.log(`  ${job.prUrl}`);
   if (job.title) console.log(`  ${c.dim}${job.title}${c.reset}`);
   console.log(`  provider ${job.provider}${job.outcome ? `  outcome ${c.bold}${job.outcome}${c.reset}` : ""}`);
+  if (job.requestedBy?.label) {
+    console.log(`  requested by ${job.requestedBy.label}${job.requestedBy.address ? ` ${c.dim}(${job.requestedBy.address})${c.reset}` : ""}`);
+  }
+  if (job.lastResumeRequestedBy?.label) {
+    console.log(`  last resumed by ${job.lastResumeRequestedBy.label}${job.lastResumeRequestedBy.address ? ` ${c.dim}(${job.lastResumeRequestedBy.address})${c.reset}` : ""}`);
+  }
   if (job.error) console.log(`  ${c.red}${job.error}${c.reset}`);
   if (job.state === "done" && job.hasSession) {
     console.log(`\n${c.dim}author replied? re-check it:  snooze resume ${job.ref}${c.reset}`);

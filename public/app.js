@@ -253,6 +253,8 @@ function upsertReview(data) {
       skipReason: data.skipReason || null, skipMessage: data.skipMessage || null,
       finished: false, freshFinish: false, notified: false, finishedAt: data.finishedAt || null,
       createdAt: data.createdAt || null, stats: null,
+      requestedBy: data.requestedBy || null,
+      lastResumeRequestedBy: data.lastResumeRequestedBy || null,
       summaryText: "", errorText: "", es: null, panelLoaded: false, els: null, _systemShown: false,
     };
     reviews.set(rev.id, rev);
@@ -268,6 +270,8 @@ function upsertReview(data) {
   if (data.skipped) rev.skipped = true;
   if (data.prMeta && !rev.prMeta) rev.prMeta = data.prMeta;
   else if (data.nameWithOwner && !rev.prMeta) rev.prMeta = { nameWithOwner: data.nameWithOwner, number: data.number, title: data.title };
+  if (data.requestedBy) rev.requestedBy = data.requestedBy;
+  if (data.lastResumeRequestedBy) rev.lastResumeRequestedBy = data.lastResumeRequestedBy;
   return rev;
 }
 
@@ -578,6 +582,24 @@ function renderStats(rev) {
 
   if (rev.provider) {
     tiles.push({ icon: "chip", label: "provider", value: rev.provider, sub: "", mono: true });
+  }
+  if (rev.requestedBy?.label) {
+    tiles.push({
+      icon: "chip",
+      label: "requested by",
+      value: rev.requestedBy.label,
+      sub: rev.requestedBy.address || "",
+      mono: true,
+    });
+  }
+  if (rev.lastResumeRequestedBy?.label) {
+    tiles.push({
+      icon: "chip",
+      label: "last resumed by",
+      value: rev.lastResumeRequestedBy.label,
+      sub: rev.lastResumeRequestedBy.address || "",
+      mono: true,
+    });
   }
 
   if (Number.isFinite(m.additions) || Number.isFinite(m.deletions)) {
@@ -954,6 +976,8 @@ async function loadFinishedLog(rev) {
     rev.provider = job.provider || rev.provider || "claude";
     rev.sessionId = job.sessionId || job.summary?.sessionId || rev.sessionId;
     rev.model = job.model || rev.model;
+    rev.requestedBy = job.requestedBy || rev.requestedBy;
+    rev.lastResumeRequestedBy = job.lastResumeRequestedBy || rev.lastResumeRequestedBy;
     for (const ev of job.events || []) { if (ev.kind === "phase") rev.phase = ev.phase; appendLog(rev, ev); }
     rev.els.count.textContent = `${rev.els.log.children.length} events`;
     renderHead(rev); renderStepper(rev); renderStats(rev); renderSummary(rev); renderLists();

@@ -71,6 +71,12 @@ control a security surface, not a convenience feature.
   be persisted.
 - Any command that dispatches work must state whose GitHub identity will post the
   review and whose plan pays for it. Do not quiet that down.
+- Throttle failed remote-token checks per source. A shared token is still a
+  password, even on a private network.
+- Persist the remote requester's self-asserted label and observed source
+  address on the job. Do not describe a shared-token label as verified identity.
+- A short instance id collision must be reported as ambiguous; never route a
+  review ref to whichever peer happens to appear first.
 - Reading plan usage shells out to a provider CLI, so keep it opt-in
   (`?usage=1`). A status sweep across peers must not pay for it by default.
 
@@ -141,6 +147,11 @@ docker build -t prsnooze:verify .
 
 Also run `git diff --check` and syntax-check changed JavaScript. CI tests Node
 20 and Node 22, so do not use APIs outside the declared `node >=20` floor.
+When a test needs a filesystem failure, construct it (for example, create a
+regular file and address a child beneath it). Do not borrow special system paths
+whose failure mode differs or hangs across macOS, Linux, containers, or root.
+A hung suite is a failure: reproduce the CI operating system in a container
+before blaming the runner.
 
 For any provider adapter or event-parser change, fixtures are necessary but not
 sufficient. Run the installed real CLI in JSON/non-interactive mode inside a
@@ -173,5 +184,7 @@ retry without validating the Bulk Advisory path in CI.
 - Add regression tests for every bug fix, especially provider event handling.
 - Never commit `.env`, auth files, tokens, provider session data, cloned repos,
   worktrees, or captured output containing source code or secrets.
+- Keep `.env`, `.git`, host dependency trees, and runtime data out of the Docker
+  build context. A local image must not preserve secrets in copied layers.
 - Keep documentation and `.env.example` aligned with runtime behavior.
 - `CLAUDE.md` is only a bridge to this file. Put durable project guidance here.
