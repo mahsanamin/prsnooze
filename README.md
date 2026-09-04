@@ -203,6 +203,12 @@ Before it runs, it checks whether that's worth doing and tells you: *"2 new comm
 | An SSH key | not needed — it clones over HTTPS with the gh token | same |
 | Staying up after a reboot | `bin/prsnooze-service install` | already on (`restart: unless-stopped`) |
 
+For local development, Node `22.23.2` is pinned in both `.nvmrc` and
+`.tool-versions`. Run `nvm install`, `asdf install`, or `mise install` from the
+repository root and the matching runtime is selected without checking the
+Dockerfile or CI configuration. Node 20 remains supported by the package and
+CI compatibility matrix.
+
 Docker is the easier route for a machine several people will use, since it brings its own `node`, `git`, `gh`, Claude Code, and Codex CLI:
 
 ```sh
