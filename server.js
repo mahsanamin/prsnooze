@@ -308,11 +308,11 @@ app.get("/api/usage", async (_req, res) => {
   res.json({ ...data, month: monthToDateUsage() });
 });
 
-// Which model the reviews run on. prsnooze never passes --model, so this is
-// whatever the host's claude CLI defaults to — see lib/claude-model.js. Read the
-// same way as the plan meter (a local slash command, cached), and shown to
-// everyone, because "which model reviewed my PR" is the first thing that
-// explains why a review reads the way it does.
+// Which model the selected provider reports. Claude answers through its local
+// slash command; Codex reports an explicit configured model here and records
+// an otherwise-defaulted model on the completed job from its session rollout.
+// It is shown to everyone because "which model reviewed my PR" helps explain
+// why a review reads the way it does.
 app.get("/api/model", async (_req, res) => {
   const providerId = String(_req.query.provider || DEFAULT_REVIEW_PROVIDER).toLowerCase();
   const provider = PROVIDERS.get(providerId);

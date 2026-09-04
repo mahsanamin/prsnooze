@@ -10,7 +10,9 @@ An entry in `lib/providers/index.js` supplies:
 - `run(options)`, returning an event emitter with `event`, `exit`, and `error`;
 - `prepareWorkspace(path)`, for provider-specific trust setup;
 - project and user skill directories;
-- optional model and plan-usage readers.
+- optional model and plan-usage readers;
+- preflight metadata: its unsafe command, installation hint, authentication
+  check, and authentication hint.
 
 The adapter translates native CLI output into these stable events:
 
@@ -25,12 +27,17 @@ GitHub reconciliation, cleanup, persistence, cancellation, and resuming. The
 browser learns available providers from `/api/config`, so it needs no new
 provider-specific branch.
 
+Startup builds its preflight list from the same registry. Every configured
+provider is checked. A failure for the effective default blocks an interactive
+start, while a non-default failure is a visible warning so another working
+provider can still serve reviews.
+
 To add AGY later:
 
 1. Add `lib/providers/agy.js` to spawn its non-interactive CLI and normalize its
    stream.
-2. Register it in `lib/providers/index.js`, including its skill locations and
-   workspace preparation.
+2. Register it in `lib/providers/index.js`, including its skill locations,
+   workspace preparation, unsafe command, and CLI/auth preflight metadata.
 3. Add its CLI and persistent auth directory to the Docker setup, plus a login
    helper if its authentication is interactive.
 4. Add focused tests for fresh runs, resumed runs, event normalization,

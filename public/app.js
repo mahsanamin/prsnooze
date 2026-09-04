@@ -1214,11 +1214,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ----------------------------------------------------------- active model ---
-// Every review runs on whatever the host's claude CLI defaults to — prsnooze
-// never passes --model. That default decides how sharp the reviews come back,
-// so it belongs on screen next to the plan meter instead of only in the host's
-// terminal. It changes when someone edits their CLI settings, not once a
-// review, so the reading is cheap to hold on to (see lib/claude-model.js).
+// The provider's current model decides how sharp the reviews come back, so it
+// belongs next to the plan meter when the provider can report it. Each finished
+// job separately keeps the concrete model that ran its review.
 let modelData = null;
 
 async function refreshModel() {

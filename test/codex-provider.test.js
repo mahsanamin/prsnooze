@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { normalizeCodexEvent, runCodex, isRecognizedCodexEvent } = require("../lib/providers/codex");
+const { getSessionModel, getModel } = require("../lib/providers/codex-model");
 
 test("Codex JSONL is normalized into the existing live event contract", () => {
   const state = { startedAt: Date.now() - 10, cwd: "/tmp/repo", numTurns: 0, finalText: "" };
@@ -143,4 +144,40 @@ test("a clean Codex run produces no stderr warning and no raw-JSON noise", async
     events.filter((e) => e.kind === "log"),
     [{ kind: "log", message: "Codex notice: shortened" }],
   );
+});
+
+test("the resolved model is read from Codex's own session record", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-codex-model-"));
+  const codexHome = path.join(dir, ".codex");
+  const sessions = path.join(codexHome, "sessions", "2026", "09", "04");
+  fs.mkdirSync(sessions, { recursive: true });
+  const rollout = path.join(sessions, "rollout-2026-09-04-thread-abc.jsonl");
+  fs.writeFileSync(rollout, [
+    JSON.stringify({ type: "turn_context", payload: { model: "gpt-old" } }),
+    JSON.stringify({ type: "turn_context", payload: { model: "gpt-reviewer" } }),
+    "",
+  ].join("\n"));
+
+  assert.equal(await getSessionModel({ sessionId: "thread-abc", codexHome }), "gpt-reviewer");
+
+  const { bin } = fakeCodex(dir);
+  const events = await collectRun({ bin, cwd: dir, codexHome, promptText: "review now" });
+  assert.ok(events.some((event) =>
+    event.kind === "system" && event.subtype === "model" && event.model === "gpt-reviewer"));
+});
+
+test("Codex model lookup reports explicit choices but does not invent a CLI default", async () => {
+  assert.deepEqual(await getModel({ model: "gpt-explicit" }), {
+    ok: true,
+    name: "gpt-explicit",
+    isDefault: false,
+  });
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-codex-doctor-"));
+  const bin = path.join(dir, "codex-doctor");
+  fs.writeFileSync(bin, `#!/bin/sh
+printf '%s\\n' '{"checks":{"config.load":{"details":{"model":"<default>"}}}}'
+`);
+  fs.chmodSync(bin, 0o755);
+  assert.deepEqual(await getModel({ bin }), { ok: false, reason: "cli-default-not-reported" });
 });

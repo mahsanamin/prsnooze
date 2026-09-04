@@ -33,10 +33,10 @@ ${c.orange}${c.bold}     👀  prsnooze${c.reset}  ${c.dim}— PR reviews that h
 }
 
 function warning() {
-  const provider = String(envSetting("DEFAULT_REVIEW_PROVIDER", "claude")).toLowerCase();
-  const command = provider === "codex"
-    ? "codex exec --dangerously-bypass-approvals-and-sandbox"
-    : "claude --dangerously-skip-permissions";
+  const commands = configuredProviders()
+    .map((provider) => provider.dangerousCommand)
+    .filter(Boolean);
+  const command = commands.join(" or ") || "an AI reviewer without approval prompts";
   process.stdout.write(
     `${c.yellow}${c.bold}⚠️  WARNING — read this before exposing the URL ⚠️${c.reset}\n` +
       `  prsnooze runs ${c.bold}${command}${c.reset}. The reviewer\n` +
@@ -156,35 +156,33 @@ async function runPreflight() {
   console.log(`${c.bold}preflight checks${c.reset}\n`);
 
   const dataHome = resolveDataHome();
-  const defaultProvider = String(envSetting("DEFAULT_REVIEW_PROVIDER", "claude")).toLowerCase();
-  const providerBin = defaultProvider === "codex"
-    ? envSetting("CODEX_BIN", "codex")
-    : envSetting("CLAUDE_BIN", "claude");
-  const providerLabel = defaultProvider === "codex" ? "Codex" : "Claude";
-  const providerChecks = defaultProvider === "codex"
-    ? [
-        {
-          name: "Codex is logged in",
-          run: async () => {
-            const { stdout, stderr } = await execFileP(providerBin, ["login", "status"]);
-            return (stdout || stderr).trim().split("\n")[0] || "ok";
-          },
-          hint: "Run `codex login` once in a terminal to complete the login flow.",
+  const providers = configuredProviders();
+  const requestedDefault = String(envSetting("DEFAULT_REVIEW_PROVIDER", "claude")).toLowerCase();
+  const effectiveDefault = providers.some((provider) => provider.id === requestedDefault)
+    ? requestedDefault
+    : providers[0]?.id;
+  const providerChecks = providers.flatMap((provider) => {
+    const required = provider.id === effectiveDefault;
+    return [
+      {
+        name: `${provider.label} CLI on PATH`,
+        run: async () => {
+          const { stdout } = await execFileP(provider.bin, ["--version"]);
+          return stdout.trim().split("\n")[0];
         },
-      ]
-    : [
-        {
-          name: "Claude is logged in",
-          run: async () => {
-            const cfg = path.join(os.homedir(), ".claude");
-            if (!fs.existsSync(cfg)) {
-              throw new Error("no ~/.claude/ directory, run `claude` once interactively to log in");
-            }
-            return "~/.claude/ present";
-          },
-          hint: "Run `claude` once in a terminal to complete the login flow.",
-        },
-      ];
+        hint: provider.installHint,
+        required,
+      },
+      ...(provider.checkAuth
+        ? [{
+            name: `${provider.label} is logged in`,
+            run: () => provider.checkAuth({ bin: provider.bin }),
+            hint: provider.authHint,
+            required,
+          }]
+        : []),
+    ];
+  });
   const checks = [
     {
       name: "Node.js ≥ 20",
@@ -204,14 +202,12 @@ async function runPreflight() {
       hint: "Install git: https://git-scm.com/downloads",
     },
     {
-      name: `${providerLabel} CLI on PATH`,
+      name: "at least one review provider configured",
       run: async () => {
-        const { stdout } = await execFileP(providerBin, ["--version"]);
-        return stdout.trim().split("\n")[0];
+        if (!providers.length) throw new Error("REVIEW_PROVIDERS contains no supported provider ids");
+        return providers.map((provider) => provider.label).join(", ");
       },
-      hint: defaultProvider === "codex"
-        ? "Install Codex CLI and ensure `codex --version` works."
-        : "Install Claude Code (https://claude.com/claude-code) and ensure `claude --version` works.",
+      hint: "Set REVIEW_PROVIDERS to one or more supported ids, such as `claude,codex`.",
     },
     ...providerChecks,
     {
@@ -313,14 +309,32 @@ async function runPreflight() {
       const detail = await ch.run();
       console.log(`${c.green}ok${c.reset} ${c.dim}${detail || ""}${c.reset}`);
     } catch (e) {
-      allOk = false;
-      console.log(`${c.red}fail${c.reset}`);
-      console.log(`    ${c.red}${e.message}${c.reset}`);
+      const required = ch.required !== false;
+      if (required) allOk = false;
+      console.log(required
+        ? `${c.red}fail${c.reset}`
+        : `${c.yellow}unavailable${c.reset} ${c.dim}(optional provider)${c.reset}`);
+      console.log(`    ${required ? c.red : c.yellow}${e.message}${c.reset}`);
       const hint = e.hint || ch.hint;
       if (hint) console.log(`    ${c.dim}hint: ${hint}${c.reset}`);
     }
   }
   return allOk;
+}
+
+// Build the providers from the same registry and .env values server.js uses.
+// A future adapter (such as AGY) only needs to add its metadata to the registry;
+// startup does not need another provider-specific branch.
+function configuredProviders() {
+  const { DEFINITIONS, createProvider, providerIds } = require(path.join(ROOT, "lib", "providers"));
+  const ids = providerIds(envSetting("REVIEW_PROVIDERS", ""));
+  return ids.map((id) => {
+    const def = DEFINITIONS[id];
+    const env = { ...process.env };
+    env[def.binEnv] = envSetting(def.binEnv, def.defaultBin);
+    if (def.modelEnv) env[def.modelEnv] = envSetting(def.modelEnv, "");
+    return createProvider(id, env);
+  }).filter(Boolean);
 }
 
 // Which transport lib/git-ops will use. Read the same two places it does, in

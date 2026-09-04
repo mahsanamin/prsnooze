@@ -113,9 +113,9 @@ If the host's `claude` runs on an API key instead of a subscription there are no
 
 ## The model doing the reviewing is on screen
 
-Claude reviews use the host CLI's selected model, which the page reads from `/model`. Codex also uses its CLI default unless `CODEX_MODEL` is set. Set that variable when you want to pin and display a Codex model.
+Claude reviews use the host CLI's selected model, which the page reads from `/model`. Codex also uses its CLI default unless `CODEX_MODEL` is set. An explicit Codex model can be shown before a run; otherwise prsnooze records the concrete model from Codex's own session record when the review finishes.
 
-It's there because it's the shortest explanation of how a review reads: the same PR comes back very differently on Haiku than on Opus. Each finished review also keeps the model it actually ran on in its stats, so a review from last month still tells you what read that diff after the host has moved on to something else. Changing it is a host-side thing — `/model` in their CLI, not a control on this page.
+It's there because it's the shortest explanation of how a review reads: the same PR comes back very differently on Haiku than on Opus. Each finished review also keeps the model it actually ran on in its stats, so a review from last month still tells you what read that diff after the host has moved on to something else. Changing it is a host-side thing through the provider CLI or `CODEX_MODEL`, not a control on this page.
 
 ## What it does, step by step
 

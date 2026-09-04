@@ -65,6 +65,27 @@ These rules come from a real `codex exec --json` review, not only a fixture:
 When Codex changes its JSONL schema, update recognition, normalization, and
 fixtures together.
 
+## Claude stream invariants
+
+- `rate_limit_event` is recognized subscription telemetry, not review output.
+  Keep it out of the raw `other` log unless the UI gains a deliberate,
+  structured use for it.
+- Unknown Claude event types must remain visible as `other`, for the same
+  schema-drift reason as unknown Codex events.
+
+## Provider preflight and model reporting
+
+- Preflight every provider configured in `REVIEW_PROVIDERS`. A failing default
+  provider blocks an interactive start; a failing non-default provider is
+  reported as unavailable but does not take down a host whose default works.
+- Keep each provider's binary, auth check, hints, and unsafe command in the
+  provider registry. Adding AGY must not add another provider-name branch to
+  `bin/start.js`.
+- Codex's public JSONL stream currently omits its model. Read the concrete model
+  from that run's own `turn_context` rollout record after exit. If neither the
+  run nor the CLI reports a model, leave it unknown rather than guessing from
+  the catalog.
+
 ## Required validation before delivery
 
 Do not report a change as green merely because `npm test` passes. Before
