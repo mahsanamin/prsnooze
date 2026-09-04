@@ -13,8 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
-const { getUsage } = require("./lib/claude-usage");
-const { getModel } = require("./lib/claude-model");
+const { createProvider, discoverProvidersSync, providerIds } = require("./lib/providers");
 const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
 
 // --- env ---
@@ -34,6 +33,18 @@ const OUTPUTS_DIR = path.resolve(
 const JOBS_DIR = path.join(OUTPUTS_DIR, "jobs");
 const KEEP_WORKTREE_ON_SUCCESS = String(process.env.KEEP_WORKTREES_ON_SUCCESS || "false") === "true";
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
+const CODEX_BIN = process.env.CODEX_BIN || "codex";
+const discoveredProviders = discoverProvidersSync({ env: process.env });
+// Keep the server usable under --no-check even when neither CLI is currently
+// runnable. Preflight will explain the missing binary, as it did before.
+const providerList = discoveredProviders.length
+  ? discoveredProviders
+  : providerIds(process.env.REVIEW_PROVIDERS).map((id) => createProvider(id, process.env)).filter(Boolean);
+const PROVIDERS = new Map(providerList.map((provider) => [provider.id, provider]));
+const requestedDefaultProvider = String(process.env.DEFAULT_REVIEW_PROVIDER || "claude").toLowerCase();
+const DEFAULT_REVIEW_PROVIDER = PROVIDERS.has(requestedDefaultProvider)
+  ? requestedDefaultProvider
+  : PROVIDERS.keys().next().value || "claude";
 const HERO_IMAGE = process.env.HERO_IMAGE || "/heroes/sleepy-cat.svg";
 const AUTO_APPROVE = String(process.env.AUTO_APPROVE ?? "true") === "true";
 const CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "80", 10);
@@ -95,7 +106,10 @@ function pushEvent(jobId, event) {
   if (event.kind === "phase") job.phase = event.phase;
   if (event.kind === "pr_meta") job.prMeta = event;
   if (event.kind === "worktree_ready") job.worktreePath = event.path;
-  if (event.kind === "claude_started") job.claudePid = event.pid || null;
+  if (event.kind === "agent_started" || event.kind === "claude_started") {
+    job.agentPid = event.pid || null;
+    job.claudePid = event.pid || null;
+  }
   // The CLI announces the model it booted with on its init event. Recorded on
   // the job so a review keeps the model that actually read the diff, even after
   // the host changes their default.
@@ -118,6 +132,7 @@ function pushEvent(jobId, event) {
     event.kind === "queued" ||
     event.kind === "started" ||
     event.kind === "phase" ||
+    event.kind === "agent_started" ||
     event.kind === "claude_started" ||
     event.kind === "done" ||
     event.kind === "failed" ||
@@ -133,6 +148,9 @@ const queue = new Queue(
       reposDir: REPOS_DIR,
       worktreesDir: WORKTREES_DIR,
       claudeBin: CLAUDE_BIN,
+      codexBin: CODEX_BIN,
+      providers: PROVIDERS,
+      defaultProvider: DEFAULT_REVIEW_PROVIDER,
       keepWorktreeOnSuccess: KEEP_WORKTREE_ON_SUCCESS,
       autoApprove: AUTO_APPROVE,
       confidenceThreshold: CONFIDENCE_THRESHOLD,
@@ -240,6 +258,8 @@ app.get("/api/config", (req, res) => {
     isHost: isLoopback(req),
     hostLogin: HOST_LOGIN,
     concurrent: MAX_CONCURRENT_REVIEWS > 1,
+    providers: providerList.map(({ id, label }) => ({ id, label })),
+    defaultProvider: DEFAULT_REVIEW_PROVIDER,
     // Nothing about the approve password is reported. The button always shows
     // and always asks, so the client has no state to sync — and whether a
     // password is configured isn't the browser's business.
@@ -272,7 +292,11 @@ function monthToDateUsage(now = new Date()) {
 // lib/claude-usage.js, so a room full of open tabs still only spawns one CLI;
 // the month-to-date total is cheap and always computed fresh.
 app.get("/api/usage", async (_req, res) => {
-  const data = await getUsage({ claudeBin: CLAUDE_BIN });
+  const providerId = String(_req.query.provider || DEFAULT_REVIEW_PROVIDER).toLowerCase();
+  const provider = PROVIDERS.get(providerId);
+  const data = provider?.getUsage
+    ? await provider.getUsage({ bin: provider.bin, model: provider.model })
+    : { ok: false, reason: provider ? "unsupported-by-provider" : "unknown-provider" };
   res.set("Cache-Control", "no-store");
   if (!data.ok && data.detail) {
     // The host is the only one who can fix a broken reading, so the reason goes
@@ -290,7 +314,11 @@ app.get("/api/usage", async (_req, res) => {
 // everyone, because "which model reviewed my PR" is the first thing that
 // explains why a review reads the way it does.
 app.get("/api/model", async (_req, res) => {
-  const data = await getModel({ claudeBin: CLAUDE_BIN });
+  const providerId = String(_req.query.provider || DEFAULT_REVIEW_PROVIDER).toLowerCase();
+  const provider = PROVIDERS.get(providerId);
+  const data = provider?.getModel
+    ? await provider.getModel({ bin: provider.bin, model: provider.model })
+    : { ok: false, reason: provider ? "unsupported-by-provider" : "unknown-provider" };
   res.set("Cache-Control", "no-store");
   if (!data.ok && data.detail) {
     // Only the host can fix a broken reading, so the reason goes to their
@@ -353,7 +381,11 @@ function approveSucceeded(ip) {
 
 app.post("/api/review", (req, res) => {
   const { prUrl } = req.body || {};
+  const provider = String(req.body?.provider || DEFAULT_REVIEW_PROVIDER).toLowerCase();
   if (!prUrl) return res.status(400).json({ error: "prUrl is required" });
+  if (!PROVIDERS.has(provider)) {
+    return res.status(400).json({ error: `review provider is not available: ${provider}` });
+  }
   let parsed;
   try {
     parsed = parsePrUrl(prUrl);
@@ -367,12 +399,13 @@ app.post("/api/review", (req, res) => {
     createdAt: Date.now(),
     state: "queued",
     phase: null,
+    provider,
     events: [],
   };
   jobs.set(id, job);
   persistJob(job);
   queue.enqueue(job);
-  res.status(202).json({ jobId: id, prUrl: parsed.url });
+  res.status(202).json({ jobId: id, prUrl: parsed.url, provider });
 });
 
 // Coarse per-job shape for the list view (the WS snapshot and /api/jobs share
@@ -380,6 +413,7 @@ app.post("/api/review", (req, res) => {
 function jobListItem(j) {
   return {
     id: j.id,
+    provider: j.provider || "claude",
     prUrl: j.prUrl,
     state: j.state,
     phase: j.phase,
@@ -418,7 +452,7 @@ app.get("/api/jobs/:id", (req, res) => {
 });
 
 // Remove a finished review from the list, and from disk so it stays gone
-// across a restart. Queued/running reviews are refused: their Claude session
+// across a restart. Queued/running reviews are refused: their provider session
 // is still streaming events at this job id, and dropping the record would
 // leave those events with nowhere to land.
 app.delete("/api/jobs/:id", async (req, res) => {
@@ -446,13 +480,13 @@ app.delete("/api/jobs/:id", async (req, res) => {
 
 
 // --- resuming a finished review ------------------------------------------
-// A review can be picked up where it left off: the Claude session id is on the
-// job, and `claude --resume` continues that conversation instead of starting a
+// A review can be picked up where it left off: the provider session id is on the
+// job, and its adapter continues that conversation instead of starting a
 // fresh read of the PR. But resuming is only worth it under some conditions —
 // the PR still open, not already approved, and something new to look at (the
 // author pushed commits, or replied to the comments we left). This works out
 // which case we're in so the UI can say so, and so a pointless run can be
-// refused rather than silently costing a Claude session.
+// refused rather than silently costing a provider session.
 function reviewSessionId(job) {
   return job.sessionId || job.summary?.sessionId || job.resumeSessionId || null;
 }
@@ -471,7 +505,7 @@ async function assessJobResume(job) {
 // Read-only: is this PR still open, and has it already been approved? The
 // Approve button is drawn from this, so it deliberately does NOT reuse
 // resume-check — that answers a different question and returns nothing at all
-// for a review with no Claude session. Cached briefly: selecting a review asks,
+// for a review with no provider session. Cached briefly: selecting a review asks,
 // and clicking between reviews shouldn't mean a `gh` call per click.
 //
 // Failures are cached too, for much less time. A logged-out or timing-out `gh`
@@ -553,19 +587,19 @@ function isJobActive(job) {
   return job.state === "queued" || job.state === "running";
 }
 
-// Resume — re-run this job by RESUMING its original Claude session to
+// Resume: re-run this job by resuming its original provider session to
 // check whether the author addressed the review's comments. No new session.
 app.post("/api/jobs/:id/verify", async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   const sessionId = reviewSessionId(job);
   if (!sessionId) {
-    return res.status(400).json({ error: "no Claude session recorded for this review — run a fresh review instead" });
+    return res.status(400).json({ error: "no provider session recorded for this review; run a fresh review instead" });
   }
   if (isJobActive(job)) {
     return res.status(409).json({ error: "this review is already running" });
   }
-  // Don't burn a Claude session on a PR that's already approved or untouched
+  // Don't burn a provider session on a PR that's already approved or untouched
   // since the last look — but that's advice, not a veto: `force` overrides it,
   // and the reason is handed back so the UI can explain what it's overriding.
   //
@@ -731,7 +765,8 @@ function start(port = PORT, { banner = false } = {}) {
       console.log(`  repos:     ${REPOS_DIR}`);
       console.log(`  worktrees: ${WORKTREES_DIR}`);
       console.log(`  outputs:   ${OUTPUTS_DIR}`);
-      console.log(`  claude:    ${CLAUDE_BIN}`);
+      console.log(`  providers: ${providerList.map((provider) => `${provider.label} (${provider.bin})`).join(", ")}`);
+      console.log(`  default provider: ${DEFAULT_REVIEW_PROVIDER}`);
       console.log(`  keep wt on success: ${KEEP_WORKTREE_ON_SUCCESS}`);
       console.log(`  auto-approve clean PRs: ${AUTO_APPROVE}`);
       console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
@@ -810,16 +845,19 @@ function hydrateJobs() {
       continue; // skip corrupt/partial files
     }
     if (!job || !job.id) continue;
+    // Jobs created before provider support were all Claude runs.
+    if (!job.provider) job.provider = "claude";
 
     if (job.state === "running" || job.state === "queued") {
       // A fresh boot means this can't still be true — the process that owned
       // it is gone. Reap a leftover orphan if one is still running.
-      if (isAlive(job.claudePid)) {
+      const agentPid = job.agentPid || job.claudePid;
+      if (isAlive(agentPid)) {
         try {
-          process.kill(-job.claudePid, "SIGTERM"); // negative = whole group
+          process.kill(-agentPid, "SIGTERM"); // negative = whole group
         } catch {
           try {
-            process.kill(job.claudePid, "SIGTERM");
+            process.kill(agentPid, "SIGTERM");
           } catch {}
         }
         reaped++;
@@ -827,6 +865,7 @@ function hydrateJobs() {
       job.state = "interrupted";
       job.interruptedAt = Date.now();
       job.claudePid = null;
+      job.agentPid = null;
       if (!Array.isArray(job.events)) job.events = [];
       job.events.push({
         ts: Date.now(),

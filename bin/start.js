@@ -33,12 +33,16 @@ ${c.orange}${c.bold}     👀  prsnooze${c.reset}  ${c.dim}— PR reviews that h
 }
 
 function warning() {
+  const provider = String(envSetting("DEFAULT_REVIEW_PROVIDER", "claude")).toLowerCase();
+  const command = provider === "codex"
+    ? "codex exec --dangerously-bypass-approvals-and-sandbox"
+    : "claude --dangerously-skip-permissions";
   process.stdout.write(
     `${c.yellow}${c.bold}⚠️  WARNING — read this before exposing the URL ⚠️${c.reset}\n` +
-      `  prsnooze runs ${c.bold}claude --dangerously-skip-permissions${c.reset}. Claude\n` +
+      `  prsnooze runs ${c.bold}${command}${c.reset}. The reviewer\n` +
       `  has full file/network/tool access in the worktree without\n` +
       `  confirmation prompts.\n\n` +
-      `  - Anyone who can reach the URL can trigger a Claude session.\n` +
+      `  - Anyone who can reach the URL can trigger an AI review session.\n` +
       `  - Use a ${c.bold}fine-grained GitHub PAT${c.reset} scoped to read PRs and write\n` +
       `    review comments on the repos you actually want reviewed. Avoid\n` +
       `    classic "all-repos admin" tokens.\n` +
@@ -152,6 +156,35 @@ async function runPreflight() {
   console.log(`${c.bold}preflight checks${c.reset}\n`);
 
   const dataHome = resolveDataHome();
+  const defaultProvider = String(envSetting("DEFAULT_REVIEW_PROVIDER", "claude")).toLowerCase();
+  const providerBin = defaultProvider === "codex"
+    ? envSetting("CODEX_BIN", "codex")
+    : envSetting("CLAUDE_BIN", "claude");
+  const providerLabel = defaultProvider === "codex" ? "Codex" : "Claude";
+  const providerChecks = defaultProvider === "codex"
+    ? [
+        {
+          name: "Codex is logged in",
+          run: async () => {
+            const { stdout, stderr } = await execFileP(providerBin, ["login", "status"]);
+            return (stdout || stderr).trim().split("\n")[0] || "ok";
+          },
+          hint: "Run `codex login` once in a terminal to complete the login flow.",
+        },
+      ]
+    : [
+        {
+          name: "Claude is logged in",
+          run: async () => {
+            const cfg = path.join(os.homedir(), ".claude");
+            if (!fs.existsSync(cfg)) {
+              throw new Error("no ~/.claude/ directory, run `claude` once interactively to log in");
+            }
+            return "~/.claude/ present";
+          },
+          hint: "Run `claude` once in a terminal to complete the login flow.",
+        },
+      ];
   const checks = [
     {
       name: "Node.js ≥ 20",
@@ -171,28 +204,16 @@ async function runPreflight() {
       hint: "Install git: https://git-scm.com/downloads",
     },
     {
-      name: "claude CLI on PATH",
+      name: `${providerLabel} CLI on PATH`,
       run: async () => {
-        const { stdout } = await execFileP(process.env.CLAUDE_BIN || "claude", [
-          "--version",
-        ]);
+        const { stdout } = await execFileP(providerBin, ["--version"]);
         return stdout.trim().split("\n")[0];
       },
-      hint: "Install Claude Code (https://claude.com/claude-code) and ensure `claude --version` works.",
+      hint: defaultProvider === "codex"
+        ? "Install Codex CLI and ensure `codex --version` works."
+        : "Install Claude Code (https://claude.com/claude-code) and ensure `claude --version` works.",
     },
-    {
-      name: "claude is logged in",
-      run: async () => {
-        // No deterministic offline auth check today — claude --version succeeds
-        // even when not logged in. Best-effort: confirm a config dir exists.
-        const cfg = path.join(os.homedir(), ".claude");
-        if (!fs.existsSync(cfg)) {
-          throw new Error(`no ~/.claude/ directory — run \`claude\` once interactively to log in`);
-        }
-        return `~/.claude/ present`;
-      },
-      hint: "Run `claude` once in a terminal to complete the login flow.",
-    },
+    ...providerChecks,
     {
       name: "gh CLI on PATH",
       run: async () => {
@@ -310,6 +331,11 @@ function transport() {
   const raw =
     process.env.PRSNOOZE_GIT_TRANSPORT || readEnvFile(ENV_FILE).PRSNOOZE_GIT_TRANSPORT || "https";
   return String(raw).toLowerCase() === "ssh" ? "ssh" : "https";
+}
+
+function envSetting(key, fallback = "") {
+  const { readEnvFile } = require(path.join(ROOT, "lib", "instance.js"));
+  return process.env[key] || readEnvFile(ENV_FILE)[key] || fallback;
 }
 
 // Ask `gh auth git-credential` for github.com the way git would.

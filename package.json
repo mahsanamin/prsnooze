@@ -1,7 +1,7 @@
 {
   "name": "prsnooze",
   "version": "0.1.0",
-  "description": "prsnooze \u2014 PR reviews that happen while you sleep. Teammates paste a GitHub PR URL; the host runs Claude Code headlessly with your project's review skill and posts the review back to the PR.",
+  "description": "prsnooze: PR reviews through Claude Code or Codex. Paste a GitHub PR URL, run the selected provider with the project's review skill, and post the review back to the PR.",
   "main": "server.js",
   "type": "commonjs",
   "bin": {
@@ -27,6 +27,7 @@
     "docker:rebuild": "bin/docker-server rebuild",
     "docker:ssh": "bin/docker-server ssh",
     "docker:claude-login": "bin/docker-server claude-login",
+    "docker:codex-login": "bin/docker-server codex-login",
     "docker:gh-login": "bin/docker-server gh-login",
     "docker:logs": "bin/docker-server logs",
     "docker:status": "bin/docker-server status"

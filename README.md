@@ -25,17 +25,17 @@ Anyone on your network opens that page, pastes a GitHub PR URL, and clicks **Rev
 
 ## Why not just buy a review bot
 
-**Because your team is already paying for Claude, and that budget is sitting idle.**
+**Because your team is already paying for Claude or Codex, and that budget is sitting idle.**
 
-prsnooze doesn't have its own account, key, or bill. It drives the `claude` CLI that the host is *already logged into* — their existing subscription, on their own machine. Nothing new to buy, no per-PR metering, no finance conversation.
+prsnooze doesn't have its own account, key, or bill. It drives the Claude Code or Codex CLI that the host is already logged into, using their existing subscription on their own machine. Pick the reviewer from the page. Nothing new to buy, no per-PR metering, no finance conversation.
 
 It's also not an autonomous agent wandering your repos. It runs when a human asks, on the one PR they named, and stops. You can watch every command it runs, live.
 
 | | A hosted review bot | prsnooze |
 |---|---|---|
-| Cost | org API key, billed per PR | nothing extra — uses the Claude plan you already have |
+| Cost | org API key, billed per PR | nothing extra, uses the Claude or Codex plan you already have |
 | Runs when | on every push, whether you wanted it or not | when someone pastes a link |
-| Reviews against | its own generic idea of "good code" | your project's `.claude/skills/review-pr` |
+| Reviews against | its own generic idea of "good code" | your project's review skill and repository guidance |
 | Your code goes | to a third-party service | nowhere — it's your teammate's laptop |
 
 ## Try it in two minutes
@@ -55,10 +55,10 @@ That's the whole thing. To let colleagues use it, share that URL over your LAN o
 
 ## ⚠️ Read this before you share the URL
 
-prsnooze runs `claude --dangerously-skip-permissions`. That means:
+prsnooze runs the selected provider without approval prompts or a sandbox. For Claude that is `--dangerously-skip-permissions`; for Codex it is `--dangerously-bypass-approvals-and-sandbox`. That means:
 
-- Claude can read, write and run anything inside the checkout, with no confirmation prompts.
-- **Anyone who can reach the page can start a Claude session on your machine.**
+- The reviewer can read, write and run anything inside the checkout, with no confirmation prompts.
+- **Anyone who can reach the page can start an AI review session on your machine.**
 - Reviews are posted as *you*. Anyone using it is reviewing under your GitHub identity.
 
 So:
@@ -103,7 +103,7 @@ A few host-specific things worth knowing:
 
 ## Everyone can see what's left of your plan
 
-Reviews come out of one person's Claude subscription, so the top bar shows how much of it is still there — **82% left · session** — coloured green, amber or red. Click it for every limit window, what's used, what's left, and when each one resets.
+Claude reviews come out of one person's subscription, so the top bar shows how much of it is still there. Codex reports token use for each completed review, but does not expose the same plan-window report through its documented non-interactive interface, so the plan meter is hidden while Codex is selected.
 
 It's deliberately visible to everyone, not just the host: whoever is about to paste a PR link is the person spending the plan, and "the session limit resets at 9pm" is a much better answer than a review that mysteriously fails. The numbers come from the CLI's own `/usage` report, which costs nothing to ask for — no tokens, no API call.
 
@@ -113,7 +113,7 @@ If the host's `claude` runs on an API key instead of a subscription there are no
 
 ## The model doing the reviewing is on screen
 
-prsnooze never picks a model: every review runs on whatever the host's `claude` CLI is set to. So the top bar says which one — **Opus 5 · 1M context** — read from the CLI's own `/model` output, which costs nothing to ask for and is the live setting rather than a config value someone wrote down once.
+Claude reviews use the host CLI's selected model, which the page reads from `/model`. Codex also uses its CLI default unless `CODEX_MODEL` is set. Set that variable when you want to pin and display a Codex model.
 
 It's there because it's the shortest explanation of how a review reads: the same PR comes back very differently on Haiku than on Opus. Each finished review also keeps the model it actually ran on in its stats, so a review from last month still tells you what read that diff after the host has moved on to something else. Changing it is a host-side thing — `/model` in their CLI, not a control on this page.
 
@@ -123,7 +123,7 @@ It's there because it's the shortest explanation of how a review reads: the same
 sequenceDiagram
   participant U as Teammate
   participant P as prsnooze
-  participant C as claude (your plan)
+  participant C as Claude or Codex
   participant G as GitHub
 
   U->>P: paste PR URL
@@ -136,9 +136,9 @@ sequenceDiagram
   P->>P: remove the worktree
 ```
 
-Because it reviews inside a real checkout of your repo, your `CLAUDE.md`, `AGENTS.md` and `.claude/skills/` are all picked up automatically.
+Because it reviews inside a real checkout of your repo, repository guidance such as `CLAUDE.md` and `AGENTS.md` is available to the selected provider.
 
-The worktree is checked out at **the PR's head commit**, so a file the reviewer opens is the code as proposed, and the `file:line` links in the review point at lines that actually exist there. prsnooze does that fetch and checkout itself, before claude starts — a reviewer that tries to move the checkout on its own gets refused, because `--dangerously-skip-permissions` silences a confirmation *prompt* but does not override a `permissions.ask` rule in the repo being reviewed, and a headless run has nobody to answer one.
+The worktree is checked out at **the PR's head commit**, so a file the reviewer opens is the code as proposed, and the `file:line` links in the review point at lines that actually exist there. prsnooze does that fetch and checkout itself before the selected provider starts, and tells the reviewer not to move the checkout. With Claude, a `permissions.ask` rule in the reviewed repo still refuses that action because a headless run has nobody to answer it.
 
 For the same reason prsnooze marks its own clones under `~/.prsnooze/repos/` as trusted workspaces in `~/.claude.json` — the one-time dialog that normally grants that only appears in an interactive session, and until it's answered claude silently ignores the reviewed repo's `permissions.allow` list and its project-level skills. It's written once per repo, it never creates the file, and it steps aside if claude is mid-write. `PRSNOOZE_TRUST_CLONES=false` turns it off.
 
@@ -174,17 +174,19 @@ If auth, payments or a migration really changed, the reducers are capped at −2
 
 ## Reviews follow your project's rules
 
-prsnooze looks for a review playbook in this order and uses the first it finds:
+prsnooze looks for a review playbook in provider-specific project and user locations, then uses its bundled fallback:
 
-1. `<repo>/.claude/skills/review-pr/SKILL.md` — **your project's own**
-2. `~/.claude/skills/review-pr/SKILL.md` — the host's personal one
-3. `skills/default-review/SKILL.md` — bundled here, so there's always a floor
+1. Claude: `<repo>/.claude/skills/review-pr/SKILL.md`, then the matching user-level path.
+2. Codex: `<repo>/.agents/skills/review-pr/SKILL.md` or `.codex/skills/review-pr/SKILL.md`, then matching user-level paths. Claude locations remain compatibility fallbacks.
+3. `skills/default-review/SKILL.md`, bundled here so there is always a floor.
 
 (`aa-review-pr` works as an alternate name at both levels.) The page shows which one ran, tagged `[project]` / `[user]` / `[bundled]`. To make reviews match how your team actually reviews, drop a `review-pr/SKILL.md` into your repo — nothing else to configure.
 
+Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](docs/provider-adapters.md).
+
 ## Someone replied to the review — now what
 
-Open the finished review and press **Resume review**. It continues the *same* Claude session, so it already knows what it said the first time, and re-checks the current state: new commits, and replies to its own comments. Each earlier point comes back as **addressed**, **answered** (the author was right — it concedes), or **still open**.
+Open the finished review and press **Resume review**. It continues the same provider session, so it already knows what it said the first time. A Claude review always resumes in Claude and a Codex review always resumes in Codex.
 
 A resume can approve. Once nothing is left open, it re-scores the current head against the same table above and posts the verb that comes out, so a small PR whose findings the author fixed gets approved instead of sitting there forever. Fixing the findings doesn't buy down the score, though: a change that touches auth, a migration or CI/CD is still high-risk after the fixes land, so it comments again and the merge call stays with you.
 
@@ -195,17 +197,18 @@ Before it runs, it checks whether that's worth doing and tells you: *"2 new comm
 | | Local | Docker |
 |---|---|---|
 | Node.js ≥ 20 | you need it | bundled |
-| `claude` CLI, logged in | you need it | bundled — `bin/docker-server claude-login` |
+| Claude Code or Codex CLI, logged in | you need at least one | both bundled, use `claude-login` and/or `codex-login` |
 | `gh` CLI, authenticated | you need it | bundled — `bin/docker-server gh-login` |
 | git | you need it | bundled |
 | An SSH key | not needed — it clones over HTTPS with the gh token | same |
 | Staying up after a reboot | `bin/prsnooze-service install` | already on (`restart: unless-stopped`) |
 
-Docker is the easier route for a machine several people will use, since it brings its own `node`, `git`, `gh` and Claude Code:
+Docker is the easier route for a machine several people will use, since it brings its own `node`, `git`, `gh`, Claude Code, and Codex CLI:
 
 ```sh
 bin/docker-server start          # build + run in the background
 bin/docker-server claude-login   # once: sign in to Claude
+bin/docker-server codex-login    # once: sign in to Codex
 bin/docker-server gh-login       # once: gh auth (paste a fine-grained PAT)
 ```
 
@@ -226,7 +229,11 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
 | `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). |
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
+| `REVIEW_PROVIDERS` | `claude,codex` | Provider adapters to offer when their CLI is installed. |
+| `DEFAULT_REVIEW_PROVIDER` | `claude` | Initially selected reviewer. |
 | `CLAUDE_BIN` | `claude` | Path to the claude CLI, if it isn't on `PATH`. |
+| `CODEX_BIN` | `codex` | Path to the Codex CLI, if it isn't on `PATH`. |
+| `CODEX_MODEL` | *unset* | Optional model passed to Codex. Unset uses the Codex CLI default. |
 | `PRSNOOZE_GIT_TRANSPORT` | `https` | How git reaches GitHub. `https` uses the gh token, so no SSH key or agent is involved. `ssh` if your key can read repos your gh token can't. |
 | `KEEP_WORKTREES_ON_SUCCESS` | `false` | Keep the checkout after a successful review (for debugging). |
 | `PRSNOOZE_TRUST_CLONES` | `true` | Mark prsnooze's own clones as trusted workspaces in `~/.claude.json`, so the reviewed repo's `.claude/` is honored. `false` = never touch that file. |
@@ -247,7 +254,7 @@ Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever co
 - **`gh pr view failed`** — run `gh auth status`. This is the most common one.
 - **`Permission denied (publickey)` on `git fetch`** — you're on `PRSNOOZE_GIT_TRANSPORT=ssh`, and the running server has no access to your shell's ssh-agent. Drop the setting to use the gh token over HTTPS instead (no key needed), or save the key's passphrase once with `ssh-add --apple-use-keychain ~/.ssh/<your-key>` on macOS. `bin/prsnooze-service doctor` tells you which side is broken.
 - **`PR is merged, not OPEN`** — it only reviews open PRs.
-- **Claude exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. `cd` in and run `claude` there to see what happened.
+- **The provider exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. Open it and run the selected provider there to inspect the failure.
 - **Every review suddenly fails** — check the usage chip in the top bar first. A spent plan limit looks exactly like a broken tool.
 - **The review feels generic** — it fell back to the bundled playbook. Add a `review-pr/SKILL.md` to your repo; the page tells you which one it used.
 

@@ -277,7 +277,7 @@ cmd_stop() {
 
   if alive "$pid"; then
     # SIGTERM, not SIGKILL: server.js traps it, aborts running reviews and
-    # kills their child claude processes. A -9 here leaves those orphaned.
+    # kills their child provider processes. A -9 here leaves those orphaned.
     kill -TERM "$pid" 2>/dev/null || true
     wait_until_down 30 || {
       printf '%sit did not stop in 15s, sending SIGKILL.%s\n' "$YEL" "$RST" >&2
@@ -313,8 +313,15 @@ cmd_status() {
     none)    printf '  supervisor %snone (it will not come back after a reboot)%s\n' "$YEL" "$RST" ;;
   esac
 
-  local pid
+  local pid=""
   pid="$(port_pid)"
+  # Minimal containers may have none of lsof, ss, or fuser. A detached start
+  # writes its PID atomically enough for this fallback, and alive() prevents a
+  # stale file from being reported as the server process.
+  if [ -z "$pid" ] && [ "$state" = prsnooze ] && [ -f "$PID_FILE" ]; then
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    alive "$pid" || pid=""
+  fi
   [ -n "$pid" ] && printf '  pid        %s\n' "$pid"
   printf '  logs       %s\n' "$(log_target)"
   printf '  data       %s\n\n' "$STATE_DIR"

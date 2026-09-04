@@ -1,8 +1,7 @@
 # prsnooze — virtual PR reviewer
 #
-# Ships node + git + gh + Claude Code. The container has no claude/gh auth
-# baked in — log in once via `docker-server claude-login` and `docker-server
-# gh-login`; auth persists in named volumes across rebuilds.
+# Ships node, git, gh, Claude Code, and Codex CLI. Provider and gh auth are
+# completed after startup and persist in named volumes across rebuilds.
 
 FROM node:22-slim
 
@@ -20,8 +19,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && apt-get update && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
-# Claude Code (npm-distributed)
-RUN npm install -g @anthropic-ai/claude-code
+# Review providers (npm-distributed)
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 # App
 WORKDIR /app
@@ -33,6 +32,7 @@ COPY . .
 RUN useradd -m -s /bin/bash prsnooze \
   && mkdir -p /home/prsnooze/.prsnooze \
               /home/prsnooze/.claude \
+              /home/prsnooze/.codex \
               /home/prsnooze/.config/gh \
   && chown -R prsnooze:prsnooze /home/prsnooze /app
 

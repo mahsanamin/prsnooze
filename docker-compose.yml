@@ -10,9 +10,14 @@ services:
       PRSNOOZE_HOME: "/home/prsnooze/.prsnooze"
       HERO_IMAGE: "${HERO_IMAGE:-/heroes/sleepy-cat.svg}"
       KEEP_WORKTREES_ON_SUCCESS: "${KEEP_WORKTREES_ON_SUCCESS:-false}"
+      REVIEW_PROVIDERS: "${REVIEW_PROVIDERS:-claude,codex}"
+      DEFAULT_REVIEW_PROVIDER: "${DEFAULT_REVIEW_PROVIDER:-claude}"
+      CODEX_MODEL: "${CODEX_MODEL:-}"
     volumes:
       # Persist Claude Code auth across rebuilds
       - prsnooze-claude:/home/prsnooze/.claude
+      # Persist Codex auth and sessions across rebuilds
+      - prsnooze-codex:/home/prsnooze/.codex
       # Persist gh auth (token + config)
       - prsnooze-gh:/home/prsnooze/.config/gh
       # Persist data (clones, worktrees, jobs)
@@ -22,5 +27,6 @@ services:
 
 volumes:
   prsnooze-claude:
+  prsnooze-codex:
   prsnooze-gh:
   prsnooze-data:

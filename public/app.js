@@ -6,6 +6,8 @@ const form = $("submit-form");
 const input = $("pr-url");
 const submitBtn = $("submit-btn");
 const submitMsg = $("submit-msg");
+const providerPick = $("provider-pick");
+const providerSelect = $("provider-select");
 const hostNameEl = $("host-name");
 const notifyToggle = $("notify-toggle");
 const queueStatusEl = $("queue-status");
@@ -73,6 +75,7 @@ let activityOpen = localStorage.getItem(LS_ACTIVITY_OPEN) === "1";
 let hostName = "";
 let isHost = false;
 let hostLogin = null;
+let defaultProvider = "claude";
 let welcomeShown = false;
 // The id the approve dialogs are about. That is the entire amount of state the
 // approve flow keeps, and it lives only between clicking the button and the
@@ -142,6 +145,19 @@ form.addEventListener("submit", async (e) => {
   await submitUrls(input.value);
 });
 input.addEventListener("input", updateSubmitButton);
+providerSelect?.addEventListener("change", () => {
+  usageData = null;
+  modelData = null;
+  renderUsage();
+  renderModel();
+  updateSubmitButton();
+  refreshUsage();
+  refreshModel();
+});
+
+function selectedProvider() {
+  return providerSelect?.value || defaultProvider || "claude";
+}
 
 async function submitUrls(raw) {
   const urls = raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
@@ -158,11 +174,16 @@ async function submitUrls(raw) {
       const r = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prUrl }),
+        body: JSON.stringify({ prUrl, provider: selectedProvider() }),
       });
       const data = await r.json();
       if (!r.ok) { errors.push(`${prUrl}: ${data.error || `HTTP ${r.status}`}`); continue; }
-      const rev = upsertReview({ id: data.jobId, prUrl: data.prUrl, state: "queued" });
+      const rev = upsertReview({
+        id: data.jobId,
+        prUrl: data.prUrl,
+        provider: data.provider || selectedProvider(),
+        state: "queued",
+      });
       ensurePanel(rev);
       openStream(rev);
       if (!firstId) firstId = data.jobId;
@@ -209,7 +230,12 @@ function findVerifiable(raw) {
   const target = normUrl(urls[0]);
   let best = null;
   for (const rev of reviews.values()) {
-    if (rev.state === "done" && rev.sessionId && normUrl(rev.prUrl) === target) {
+    if (
+      rev.state === "done" &&
+      rev.sessionId &&
+      (rev.provider || "claude") === selectedProvider() &&
+      normUrl(rev.prUrl) === target
+    ) {
       // If the same PR was reviewed more than once, resume the most recent.
       if (!best || (rev.finishedAt || 0) > (best.finishedAt || 0)) best = rev;
     }
@@ -221,7 +247,8 @@ function upsertReview(data) {
   let rev = reviews.get(data.id);
   if (!rev) {
     rev = {
-      id: data.id, prUrl: data.prUrl, prMeta: null, state: data.state || "queued",
+      id: data.id, prUrl: data.prUrl, provider: data.provider || "claude",
+      prMeta: null, state: data.state || "queued",
       phase: null, outcome: data.outcome || null, skipped: !!data.skipped,
       skipReason: data.skipReason || null, skipMessage: data.skipMessage || null,
       finished: false, freshFinish: false, notified: false, finishedAt: data.finishedAt || null,
@@ -231,6 +258,7 @@ function upsertReview(data) {
     reviews.set(rev.id, rev);
   }
   if (data.prUrl && !rev.prUrl) rev.prUrl = data.prUrl;
+  if (data.provider) rev.provider = data.provider;
   if (data.state) rev.state = data.state;
   if (data.outcome) rev.outcome = data.outcome;
   if (data.finishedAt) rev.finishedAt = data.finishedAt;
@@ -477,6 +505,18 @@ function selectReview(id) {
   try { history.replaceState(null, "", `#${id}`); } catch {}
   emptyState.hidden = true;
   input.value = rev.prUrl || "";
+  const previousProvider = selectedProvider();
+  if (providerSelect && Array.from(providerSelect.options).some((option) => option.value === rev.provider)) {
+    providerSelect.value = rev.provider;
+  }
+  if (selectedProvider() !== previousProvider) {
+    usageData = null;
+    modelData = null;
+    renderUsage();
+    renderModel();
+    refreshUsage();
+    refreshModel();
+  }
   ensurePanel(rev);
   for (const [rid, r] of reviews) if (r.els?.panel) r.els.panel.classList.toggle("active", rid === id);
   if (!rev.panelLoaded && !rev.es) loadFinishedLog(rev);
@@ -536,6 +576,10 @@ function renderStats(rev) {
   const s = rev.stats || {};
   const tiles = [];
 
+  if (rev.provider) {
+    tiles.push({ icon: "chip", label: "provider", value: rev.provider, sub: "", mono: true });
+  }
+
   if (Number.isFinite(m.additions) || Number.isFinite(m.deletions)) {
     tiles.push({
       icon: "diff",
@@ -566,6 +610,12 @@ function renderStats(rev) {
   if (Number.isFinite(s.numTurns)) tiles.push({ icon: "turns", label: "turns", value: String(s.numTurns), sub: "" });
   if (Number.isFinite(s.totalCostUsd) && s.totalCostUsd > 0) {
     tiles.push({ icon: "coin", label: "cost", value: `$${s.totalCostUsd < 0.01 ? s.totalCostUsd.toFixed(4) : s.totalCostUsd.toFixed(2)}`, sub: "" });
+  }
+  const inputTokens = Number(s.usage?.input_tokens);
+  const outputTokens = Number(s.usage?.output_tokens);
+  if (Number.isFinite(inputTokens) || Number.isFinite(outputTokens)) {
+    const totalTokens = (Number.isFinite(inputTokens) ? inputTokens : 0) + (Number.isFinite(outputTokens) ? outputTokens : 0);
+    tiles.push({ icon: "turns", label: "tokens", value: fmtNum(totalTokens), sub: "input + output" });
   }
 
   el.replaceChildren();
@@ -893,9 +943,15 @@ async function loadFinishedLog(rev) {
     if (job.prMeta) rev.prMeta = job.prMeta;
     rev.state = job.state; rev.outcome = job.outcome || rev.outcome; rev.finished = true;
     if (job.summary?.finalText) rev.summaryText = job.summary.finalText;
-    if (job.summary) rev.stats = { durationMs: job.summary.durationMs, numTurns: job.summary.numTurns, totalCostUsd: job.summary.totalCostUsd };
+    if (job.summary) rev.stats = {
+      durationMs: job.summary.durationMs,
+      numTurns: job.summary.numTurns,
+      totalCostUsd: job.summary.totalCostUsd,
+      usage: job.summary.usage,
+    };
     if (job.createdAt) rev.createdAt = job.createdAt;
     if (job.finishedAt) rev.finishedAt = job.finishedAt;
+    rev.provider = job.provider || rev.provider || "claude";
     rev.sessionId = job.sessionId || job.summary?.sessionId || rev.sessionId;
     rev.model = job.model || rev.model;
     for (const ev of job.events || []) { if (ev.kind === "phase") rev.phase = ev.phase; appendLog(rev, ev); }
@@ -949,7 +1005,12 @@ function handleEvent(rev, ev) {
     case "summary":
       if (ev.finalText) rev.summaryText = ev.finalText;
       if (ev.sessionId) rev.sessionId = ev.sessionId;
-      rev.stats = { durationMs: ev.durationMs, numTurns: ev.numTurns, totalCostUsd: ev.totalCostUsd };
+      rev.stats = {
+        durationMs: ev.durationMs,
+        numTurns: ev.numTurns,
+        totalCostUsd: ev.totalCostUsd,
+        usage: ev.usage,
+      };
       renderStats(rev); renderSummary(rev);
       break;
     case "skipped": rev.outcome = ev.outcome || "skipped"; rev.skipped = true; rev.skipReason = ev.reason; rev.skipMessage = ev.message || ""; finish(rev, "done"); break;
@@ -1161,11 +1222,15 @@ document.addEventListener("keydown", (e) => {
 let modelData = null;
 
 async function refreshModel() {
+  const provider = selectedProvider();
   try {
-    const r = await fetch("/api/model");
+    const r = await fetch(`/api/model?provider=${encodeURIComponent(provider)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    modelData = await r.json();
+    const data = await r.json();
+    if (provider !== selectedProvider()) return;
+    modelData = data;
   } catch {
+    if (provider !== selectedProvider()) return;
     // A failed poll must not wipe a known name off the screen — only the very
     // first one has nothing better to fall back to.
     if (!modelData) modelData = { ok: false, reason: "unavailable" };
@@ -1195,9 +1260,9 @@ function renderModel() {
     `<span>${escapeHtml(main)}</span>` +
     (note ? `<span class="model-note">${escapeHtml(note)}</span>` : "");
   modelChip.title =
-    `Reviews on this host run on ${d.name}${d.isDefault ? ", the claude CLI's default" : ""}. ` +
+    `Reviews on this host run on ${d.name}${d.isDefault ? ", the provider CLI's default" : ""}. ` +
     (d.stale ? "Couldn't re-read it just now, so this is the last known setting. " : "") +
-    "Change it with /model on the host machine — not from this page.";
+    "Change it in the provider CLI on the host machine, not from this page.";
 }
 
 // ------------------------------------------------------------- plan usage ---
@@ -1213,11 +1278,15 @@ let usageFetchedAt = 0;
 const USAGE_POLL_MS = 180_000;
 
 async function refreshUsage() {
+  const provider = selectedProvider();
   try {
-    const r = await fetch("/api/usage");
+    const r = await fetch(`/api/usage?provider=${encodeURIComponent(provider)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    usageData = await r.json();
+    const data = await r.json();
+    if (provider !== selectedProvider()) return;
+    usageData = data;
   } catch {
+    if (provider !== selectedProvider()) return;
     // A failed poll must not wipe a good number off the screen — only the very
     // first one has nothing better to fall back to.
     if (!usageData) usageData = { ok: false, reason: "unavailable" };
@@ -1257,6 +1326,11 @@ function renderUsage() {
     return;
   }
   if (!d.ok || !Array.isArray(d.windows) || !d.windows.length) {
+    if (d.reason === "unsupported-by-provider") {
+      usageChip.hidden = true;
+      usagePop.hidden = true;
+      return;
+    }
     // Nothing worth telling teammates — but the host is the only one who can
     // fix a broken reading, so they get a muted chip instead of silence.
     usageChip.hidden = !isHost;
@@ -1473,6 +1547,7 @@ function entrySpec(ev) {
   switch (kind) {
     case "queued": return { cat: "meta", icon: "⏳", label: "queued", body: `position ${ev.position}` };
     case "started": return { cat: "meta", icon: "▶", label: "started", body: "worker started" };
+    case "agent_started": return { cat: "meta", icon: "▶", label: ev.provider || "agent", body: `pid ${ev.pid ?? "?"}` };
     case "claude_started": return { cat: "meta", icon: "▶", label: "claude", body: `pid ${ev.pid ?? "?"}` };
     case "phase": return { cat: "phase", icon: "▸", label: "phase", body: `<strong>${escapeHtml(ev.phase || "")}</strong>` };
     case "verify_restart": return { cat: "divider", icon: "↻", label: "", body: `<strong>${escapeHtml(ev.message || "Verify fixes — re-checking")}</strong>` };
@@ -1496,7 +1571,7 @@ function entrySpec(ev) {
     case "assistant_text": return { cat: "think", icon: "💭", label: "", body: escapeHtml(ev.text || "") };
     case "tool_use": { const tool = ev.tool || "tool"; const cmd = ev.summary || ""; const title = friendlyTitle(tool, cmd); let body = title ? `<span class="ev-title">${escapeHtml(title)}</span> <span class="arg">${escapeHtml(cmd)}</span>` : `<strong>${escapeHtml(tool)}</strong> <span class="arg">${escapeHtml(cmd)}</span>`; if (ev.full) body += " " + details("input", JSON.stringify(ev.full, null, 2)); return { cat: "tool", icon: TOOL_ICONS[tool] || "🔧", label: "", body }; }
     case "tool_result": { const size = humanSize(ev.length); const preview = (ev.preview || "").trim(); const first = preview.split("\n")[0].slice(0, 100); const body = `<span class="dim">${size}</span>` + (first ? ` <span class="arg">${escapeHtml(first)}</span>` : "") + (preview ? " " + details("output", preview, ev.isError) : ""); return { cat: ev.isError ? "err" : "result", icon: ev.isError ? "✗" : "✓", label: "", body }; }
-    case "result": return { cat: ev.isError ? "err" : "ok", icon: ev.isError ? "⚠️" : "✅", label: "result", body: `claude ${ev.isError ? "error" : "ok"} · turns ${ev.numTurns}` };
+    case "result": return { cat: ev.isError ? "err" : "ok", icon: ev.isError ? "⚠️" : "✅", label: "result", body: `${ev.isError ? "error" : "ok"}${Number.isFinite(ev.numTurns) ? ` · turns ${ev.numTurns}` : ""}` };
     case "stderr": return { cat: "err", icon: "⚠", label: "stderr", body: escapeHtml(ev.text || "") };
     case "failed": return { cat: "err", icon: "❌", label: "failed", body: `<strong>${escapeHtml(ev.error || "failed")}</strong>${ev.code ? ` <span class="dim">(${escapeHtml(ev.code)})</span>` : ""}` };
     case "done": return { cat: "ok", icon: "✅", label: "done", body: "finished" };
@@ -1784,6 +1859,20 @@ async function loadConfig() {
     if (cfg.heroImage) document.body.style.setProperty("--hero", `url("${cfg.heroImage}")`);
     isHost = !!cfg.isHost;
     hostLogin = cfg.hostLogin || null;
+    defaultProvider = cfg.defaultProvider || "claude";
+    const providerOptions = Array.isArray(cfg.providers) ? cfg.providers : [];
+    if (providerSelect) {
+      providerSelect.replaceChildren(...providerOptions.map((provider) => {
+        const option = document.createElement("option");
+        option.value = provider.id;
+        option.textContent = provider.label;
+        return option;
+      }));
+      if (providerOptions.some((provider) => provider.id === defaultProvider)) {
+        providerSelect.value = defaultProvider;
+      }
+      providerPick.hidden = providerOptions.length < 2;
+    }
     if (cfg.host) {
       hostName = cfg.host;
       hostNameEl.textContent = `on ${hostName}'s machine`;
@@ -1792,6 +1881,8 @@ async function loadConfig() {
     // The usage chip names the host and has a host-only fallback state, so it
     // can only render properly once the config has landed.
     renderUsage();
+    refreshUsage();
+    refreshModel();
     for (const r2 of reviews.values()) if (r2.els?.head) renderHead(r2);
     updateStatusLight();
   } catch {}
@@ -1812,8 +1903,6 @@ updateStatusLight();
 loadConfig();
 refreshList();   // instant first paint (one-shot fetch, not a poll)
 connectLive();   // recurring updates via WebSocket — replaces the 5s poll
-refreshUsage();  // what's left of the host's Claude plan
-refreshModel();  // which model that plan is being spent on
 // Keep relative timestamps ("2m ago") ticking. Local re-render only — no network.
 setInterval(() => renderLists(), 60000);
 // A floor under the plan meter. Reviews finishing and opening the popover are

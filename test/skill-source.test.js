@@ -104,3 +104,17 @@ test("with no base ref given, the worktree is read as before", async () => {
   assert.equal(skill.ref, null);
   assert.match(skill.body, /worktree copy/);
 });
+
+test("a provider can add its own skill roots without changing the resolver", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-provider-skill-"));
+  const skillPath = path.join(root, ".agents/skills/review-pr/SKILL.md");
+  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+  fs.writeFileSync(skillPath, "---\nname: review-pr\n---\nCODEX PLAYBOOK\n");
+
+  const { skill } = await resolveReviewSkill(root, {
+    provider: { projectSkillDirs: [".agents/skills"], userSkillDirs: [] },
+  });
+
+  assert.equal(skill.source, "project");
+  assert.match(skill.body, /CODEX PLAYBOOK/);
+});
