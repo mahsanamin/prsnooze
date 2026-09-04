@@ -166,6 +166,35 @@ test("the resolved model is read from Codex's own session record", async () => {
     event.kind === "system" && event.subtype === "model" && event.model === "gpt-reviewer"));
 });
 
+test("a rejected Codex model lookup cannot suppress the process exit", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-codex-model-failure-"));
+  const { bin } = fakeCodex(dir);
+  const events = await collectRun({
+    bin,
+    cwd: dir,
+    promptText: "review now",
+    sessionModelLookup: async () => { throw new Error("simulated rollout read failure"); },
+  });
+
+  assert.equal(events.filter((event) => event.kind === "result").length, 1);
+  assert.equal(events.some((event) => event.subtype === "model"), false);
+});
+
+test("a stuck Codex model lookup is bounded and cannot hang the job", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-codex-model-timeout-"));
+  const { bin } = fakeCodex(dir);
+  const startedAt = Date.now();
+  await collectRun({
+    bin,
+    cwd: dir,
+    promptText: "review now",
+    sessionModelLookup: () => new Promise(() => {}),
+    sessionModelTimeoutMs: 10,
+  });
+
+  assert.ok(Date.now() - startedAt < 1_000, "exit should not wait forever for model enrichment");
+});
+
 test("Codex model lookup reports explicit choices but does not invent a CLI default", async () => {
   assert.deepEqual(await getModel({ model: "gpt-explicit" }), {
     ok: true,

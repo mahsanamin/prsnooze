@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { resolveJobProvider } = require("../lib/review-job");
-const { runClaude, isRecognizedClaudeEvent } = require("../lib/claude-runner");
+const { runClaude, isSilentClaudeEvent } = require("../lib/claude-runner");
 
 test("a providerless legacy job remains Claude when Codex is the current default", () => {
   const claude = { id: "claude", label: "Claude" };
@@ -50,15 +50,21 @@ test("Claude rate-limit telemetry stays quiet while unknown events remain visibl
   fs.writeFileSync(bin, `#!/bin/sh
 printf '%s\\n' '{"type":"system","subtype":"init","session_id":"claude-session","model":"opus"}'
 printf '%s\\n' '{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}'
+printf '%s\\n' '{"type":"assistant"}'
+printf '%s\\n' '{"type":"user"}'
 printf '%s\\n' '{"type":"future_event","value":1}'
 printf '%s\\n' '{"type":"result","is_error":false,"result":"done","session_id":"claude-session"}'
 `);
   fs.chmodSync(bin, 0o755);
 
   const events = await collectClaude({ claudeBin: bin, cwd: dir, promptText: "review" });
-  assert.equal(isRecognizedClaudeEvent({ type: "rate_limit_event" }), true);
-  assert.equal(isRecognizedClaudeEvent({ type: "future_event" }), false);
+  assert.equal(isSilentClaudeEvent({ type: "rate_limit_event" }), true);
+  assert.equal(isSilentClaudeEvent({ type: "assistant" }), false);
+  assert.equal(isSilentClaudeEvent({ type: "user" }), false);
+  assert.equal(isSilentClaudeEvent({ type: "future_event" }), false);
   assert.deepEqual(events.filter((event) => event.kind === "other"), [
+    { kind: "other", raw: { type: "assistant" } },
+    { kind: "other", raw: { type: "user" } },
     { kind: "other", raw: { type: "future_event", value: 1 } },
   ]);
 });

@@ -70,8 +70,9 @@ fixtures together.
 - `rate_limit_event` is recognized subscription telemetry, not review output.
   Keep it out of the raw `other` log unless the UI gains a deliberate,
   structured use for it.
-- Unknown Claude event types must remain visible as `other`, for the same
-  schema-drift reason as unknown Codex events.
+- Unknown Claude event types and known types whose required fields are missing
+  must remain visible as `other`, for the same schema-drift reason as unknown
+  Codex events. Do not use handled event names as fallback silence rules.
 
 ## Provider preflight and model reporting
 
@@ -84,7 +85,8 @@ fixtures together.
 - Codex's public JSONL stream currently omits its model. Read the concrete model
   from that run's own `turn_context` rollout record after exit. If neither the
   run nor the CLI reports a model, leave it unknown rather than guessing from
-  the catalog.
+  the catalog. Model enrichment is optional and bounded; failure or timeout
+  must never prevent the provider's `exit` event.
 
 ## Required validation before delivery
 
