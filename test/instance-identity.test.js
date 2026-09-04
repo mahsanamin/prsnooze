@@ -40,13 +40,21 @@ test("a corrupt identity file is replaced rather than crashing the server", () =
   assert.equal(identity.persisted, true);
 });
 
-test("an unwritable data dir still yields a usable identity", () => {
+test("a data dir that cannot be created still yields a usable identity", () => {
   // An instance that could not persist its id is fully usable locally; it just
   // loses remote addressability next boot. Refusing to start would be worse.
-  const identity = loadIdentity({
-    dataHome: path.join("/proc", "definitely-not-writable-prsnooze"),
-    name: "ahsan",
-  });
+  //
+  // The unwritable path is built by putting a directory below a regular FILE,
+  // so mkdir fails with ENOTDIR on every OS and regardless of whether the test
+  // runs as root. An earlier version of this test used a real system path
+  // (/proc/...) instead: on macOS that errored as intended, but on Linux the
+  // mkdir hung, which wedged CI rather than failing it. Never reach for a real
+  // system path to simulate a filesystem error.
+  const dir = tmpHome();
+  const blocker = path.join(dir, "not-a-directory");
+  fs.writeFileSync(blocker, "i am a file");
+
+  const identity = loadIdentity({ dataHome: path.join(blocker, "nested"), name: "ahsan" });
 
   assert.match(identity.id, /^[0-9a-f-]{36}$/);
   assert.equal(identity.persisted, false);
