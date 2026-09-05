@@ -72,6 +72,17 @@
           </svg>
           <span class="notify-label">Notify</span>
         </button>
+        <!-- How to drive this instance from a terminal. Deliberately in the
+             topbar rather than buried: a colleague opening this page is
+             exactly the person who needs the CLI, and the page already knows
+             the URL they reached it on. -->
+        <button id="cli-toggle" class="notify-toggle" type="button" aria-haspopup="dialog" title="Use this instance from your terminal">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M7 9l3 3-3 3" /><path d="M13 15h4" />
+          </svg>
+          <span class="notify-label">CLI</span>
+        </button>
         <span id="queue-status" class="queue-status"></span>
       </div>
     </header>
@@ -156,6 +167,55 @@
     </div>
 
     <div id="toast" class="toast" hidden></div>
+
+    <!-- Every command here is filled in from /api/config and the URL this page
+         was opened on, so a colleague copies a line that already points at THIS
+         instance instead of a placeholder they have to edit. -->
+    <div id="cli-backdrop" class="modal-backdrop" hidden>
+      <div id="cli-modal" class="modal-card cli-card" role="dialog" aria-modal="true" aria-labelledby="cli-title">
+        <div id="cli-title" class="modal-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l3 3-3 3" /><path d="M13 15h4" />
+          </svg>
+          Use this instance from your terminal
+        </div>
+        <div class="modal-sub">
+          The <code>snooze</code> CLI reaches the prsnooze instances your team runs, so you can
+          ask who has a review slot free and hand over a PR without leaving your editor.
+        </div>
+
+        <div id="cli-disabled" class="cli-warn" hidden></div>
+
+        <ol class="cli-steps">
+          <li>
+            <span class="cli-step-h">Install it</span>
+            <div class="cli-cmd"><code id="cli-install"></code><button class="cli-copy" type="button" data-copy="cli-install">Copy</button></div>
+          </li>
+          <li>
+            <span class="cli-step-h">Save the shared token</span>
+            <p class="cli-note" id="cli-token-note"></p>
+            <div class="cli-cmd"><code id="cli-token"></code><button class="cli-copy" type="button" data-copy="cli-token">Copy</button></div>
+          </li>
+          <li>
+            <span class="cli-step-h">Add this instance</span>
+            <p class="cli-note" id="cli-add-note"></p>
+            <div class="cli-cmd"><code id="cli-add"></code><button class="cli-copy" type="button" data-copy="cli-add">Copy</button></div>
+          </li>
+          <li>
+            <span class="cli-step-h">Then use it</span>
+            <div class="cli-cmd"><code id="cli-use"></code><button class="cli-copy" type="button" data-copy="cli-use">Copy</button></div>
+            <p class="cli-note">
+              Add each colleague once with their own <code>snooze add</code> line, then
+              <code>snooze status</code> shows everyone at a glance.
+            </p>
+          </li>
+        </ol>
+
+        <div class="modal-actions">
+          <button id="cli-close" type="button" class="modal-cancel">Close</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Asked on every approval. There is no unlock step and nothing is kept:
          the password travels with the click that uses it and the field is

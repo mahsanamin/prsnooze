@@ -70,6 +70,10 @@ const APPROVE_PASSWORD = process.env.MANUAL_APPROVE_PASSWORD || "";
 // identity, so it is opt-in rather than something a rebuild switches on.
 const REMOTE_TOKEN = process.env.PRSNOOZE_REMOTE_TOKEN || "";
 const PKG_VERSION = require("./package.json").version;
+// How a colleague installs the `snooze` CLI, shown in the page. Overridable so
+// a fork or an internal mirror can point at itself.
+const INSTALL_COMMAND =
+  process.env.PRSNOOZE_INSTALL_COMMAND || "npm install -g github:mahsanamin/prsnooze";
 
 // Who owns the machine this instance runs on — surfaced in the UI so teammates
 // know whose gh identity will post the reviews. Override with PRSNOOZE_HOST.
@@ -294,6 +298,13 @@ app.get("/api/config", (req, res) => {
     concurrent: MAX_CONCURRENT_REVIEWS > 1,
     providers: providerList.map(({ id, label }) => ({ id, label })),
     defaultProvider: DEFAULT_REVIEW_PROVIDER,
+    // What the page needs to tell a visitor how to reach THIS instance from
+    // their terminal. `remote.enabled` is not a secret: an unauthenticated
+    // caller already learns it from the 503-vs-401 on /api/remote/*, and the
+    // setup instructions are wrong without it. The token itself is never sent.
+    instance: { shortId: shortId(IDENTITY.id), name: IDENTITY.name },
+    remote: { enabled: REMOTE_TOKEN.trim().length > 0 },
+    installCommand: INSTALL_COMMAND,
     // Nothing about the approve password is reported. The button always shows
     // and always asks, so the client has no state to sync — and whether a
     // password is configured isn't the browser's business.

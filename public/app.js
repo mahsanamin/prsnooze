@@ -9,6 +9,8 @@ const submitMsg = $("submit-msg");
 const providerPick = $("provider-pick");
 const providerSelect = $("provider-select");
 const hostNameEl = $("host-name");
+const cliToggle = $("cli-toggle");
+const cliBackdrop = $("cli-backdrop");
 const notifyToggle = $("notify-toggle");
 const queueStatusEl = $("queue-status");
 const welcomeBanner = $("welcome-banner");
@@ -1882,6 +1884,8 @@ async function loadConfig() {
     isHost = !!cfg.isHost;
     hostLogin = cfg.hostLogin || null;
     defaultProvider = cfg.defaultProvider || "claude";
+    cliConfig = cfg;
+    renderCliCard();
     const providerOptions = Array.isArray(cfg.providers) ? cfg.providers : [];
     if (providerSelect) {
       providerSelect.replaceChildren(...providerOptions.map((provider) => {
@@ -1937,3 +1941,111 @@ setInterval(() => {
   // occasionally cost a CLI boot — enough to notice the host switching models.
   refreshModel();
 }, USAGE_POLL_MS);
+
+
+// ------------------------------------------------------------- the CLI card ---
+// Fills the setup commands in from this instance's own config and the URL the
+// visitor actually reached it on, so what they copy already points here.
+
+let cliConfig = null;
+
+// A host reading this on localhost is looking at a URL no colleague can use.
+// Say so rather than handing them a line that silently only works on their own
+// machine, which is the kind of thing you only discover from the other side.
+function peerUrlForCommands() {
+  const origin = location.origin;
+  const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(origin);
+  return { origin, local };
+}
+
+function renderCliCard() {
+  if (!cliBackdrop) return;
+  const cfg = cliConfig || {};
+  const { origin, local } = peerUrlForCommands();
+  const name = (cfg.instance?.name || cfg.host || "prsnooze").replace(/\s+/g, "-").toLowerCase();
+
+  $("cli-install").textContent = cfg.installCommand || "npm install -g github:mahsanamin/prsnooze";
+  $("cli-token").textContent = "snooze token <the shared token>";
+  $("cli-add").textContent = `snooze add ${origin} --name ${name}`;
+  $("cli-use").textContent = "snooze status && snooze review <pr-url>";
+
+  $("cli-token-note").textContent = cfg.host
+    ? `Ask ${cfg.host} for it. The same token works for every instance on your team.`
+    : "Ask whoever runs this instance for it.";
+
+  const addNote = $("cli-add-note");
+  addNote.textContent = local
+    ? "You are on localhost, so this line only works on this machine. Colleagues need this host's LAN or Tailscale address instead."
+    : "Adding checks the instance answers first, so a wrong URL fails now rather than later.";
+  addNote.classList.toggle("cli-note-warn", local);
+
+  // Remote control is opt-in, and the steps above are useless until the host
+  // switches it on. Only the host can fix it, so only the host is told how.
+  const warn = $("cli-disabled");
+  const enabled = cfg.remote?.enabled;
+  if (enabled) {
+    warn.hidden = true;
+  } else if (isHost) {
+    warn.hidden = false;
+    warn.innerHTML =
+      "<strong>Remote access is off on this instance.</strong> Until you turn it on, " +
+      "the commands below are refused with a 503. Add a token to <code>.env</code> and restart:" +
+      '<div class="cli-cmd"><code id="cli-enable">PRSNOOZE_REMOTE_TOKEN=$(openssl rand -hex 32)</code>' +
+      '<button class="cli-copy" type="button" data-copy="cli-enable">Copy</button></div>' +
+      "<span class=\"cli-note\">Anyone holding that token can queue a review here, spending this " +
+      "host's plan and posting under its GitHub identity. Share it deliberately.</span>";
+  } else {
+    warn.hidden = false;
+    warn.innerHTML =
+      "<strong>Remote access is off on this instance.</strong> These steps will not work until " +
+      `${escapeHtml(cfg.host || "whoever runs it")} enables it.`;
+  }
+}
+
+function openCliCard() {
+  renderCliCard();
+  cliBackdrop.hidden = false;
+  $("cli-close")?.focus();
+}
+
+function closeCliCard() {
+  cliBackdrop.hidden = true;
+  cliToggle?.focus();
+}
+
+cliToggle?.addEventListener("click", openCliCard);
+$("cli-close")?.addEventListener("click", closeCliCard);
+cliBackdrop?.addEventListener("click", (e) => {
+  if (e.target === cliBackdrop) closeCliCard();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && cliBackdrop && !cliBackdrop.hidden) closeCliCard();
+});
+
+// One handler for every copy button, including the one inside the host-only
+// block that is written after this file has finished running.
+cliBackdrop?.addEventListener("click", async (e) => {
+  const btn = e.target.closest?.(".cli-copy");
+  if (!btn) return;
+  const text = $(btn.dataset.copy)?.textContent || "";
+  try {
+    await navigator.clipboard.writeText(text);
+    const was = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = was; }, 1200);
+  } catch {
+    // A page served over plain HTTP has no clipboard API in some browsers.
+    // Selecting the text is a worse experience than copying, but it beats a
+    // button that silently does nothing.
+    const node = $(btn.dataset.copy);
+    if (node) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      btn.textContent = "Select + copy";
+      setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+    }
+  }
+});
