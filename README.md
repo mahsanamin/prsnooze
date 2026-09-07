@@ -77,6 +77,41 @@ bin/prsnooze-service install
 
 That hands prsnooze to the machine's own supervisor (launchd on macOS, systemd on Linux). It starts by itself at login or boot, comes straight back if it crashes, and writes to `~/.prsnooze/logs/server.log`.
 
+### On macOS, check the reviewer can still log in
+
+Claude Code keeps its credentials in your **login keychain**, and a service run by
+launchd cannot always read it. When that happens the reviewer has no credentials
+at all, and every review dies on Claude's own message:
+
+```
+Failed to authenticate: OAuth session expired and could not be refreshed
+```
+
+It is confusing because `claude auth status` in *your* terminal says you are
+logged in. The service is in a different session, and there it reports
+`{"loggedIn": false, "authMethod": "none"}`. Nothing about prsnooze, your PR, or
+your network is wrong.
+
+**Startup tells you.** Look at the log right after installing:
+
+```
+Claude is logged in... ok    ahsan.amin@wego.com, team plan     <- good
+Claude is logged in... fail  claude reports authMethod "none"   <- reviews will fail
+```
+
+If it fails, pick one:
+
+- **Skip the supervisor.** `bin/prsnooze-service uninstall`, then
+  `bin/prsnooze-service start`. That runs it with `nohup` from your own shell, so
+  it keeps your session's keychain access and survives closing the terminal. The
+  cost is real: it does not come back after a reboot.
+- **Give Claude a long-lived token.** `claude setup-token` replaces the keychain
+  lookup with a token, which is what a headless service needs. Then
+  `bin/prsnooze-service install` works and you keep automatic restart.
+
+Codex is unaffected: `codex login` writes to `~/.codex`, which a service reads
+without trouble. If only your Claude reviews fail, this is why.
+
 After that, everything is one command:
 
 | command | what it does |
@@ -330,6 +365,7 @@ Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever co
 - **The page won't load at all** — run `bin/prsnooze-service status`. If it says *stopped*, `bin/prsnooze-service start` brings it back; if it says *supervisor none*, it won't survive the next reboot until you run `install`.
 - **`gh pr view failed`** — run `gh auth status`. This is the most common one.
 - **`Permission denied (publickey)` on `git fetch`** — you're on `PRSNOOZE_GIT_TRANSPORT=ssh`, and the running server has no access to your shell's ssh-agent. Drop the setting to use the gh token over HTTPS instead (no key needed), or save the key's passphrase once with `ssh-add --apple-use-keychain ~/.ssh/<your-key>` on macOS. `bin/prsnooze-service doctor` tells you which side is broken.
+- **`Failed to authenticate: OAuth session expired and could not be refreshed`** — the reviewer cannot reach the login keychain, which happens when launchd runs it. `claude auth status` in your terminal will still say you are logged in; that is the tell, not a contradiction. See [Keep it running](#keep-it-running).
 - **`PR is merged, not OPEN`** — it only reviews open PRs.
 - **The provider exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. Open it and run the selected provider there to inspect the failure.
 - **Every review suddenly fails** — check the usage chip in the top bar first. A spent plan limit looks exactly like a broken tool.
