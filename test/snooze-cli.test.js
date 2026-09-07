@@ -169,7 +169,10 @@ test("a peer that does not answer is refused rather than saved as a lie", async 
     run("add", "http://127.0.0.1:1"),
     (e) => {
       assert.match(e.stderr, /could not reach/);
-      assert.match(e.stderr, /PRSNOOZE_REMOTE_TOKEN/);
+      // The advice must be about reachability, not about a token: a peer that
+      // never answered tells you nothing about whether it wanted one.
+      assert.match(e.stderr, /Check the URL/);
+      assert.doesNotMatch(e.stderr, /PRSNOOZE_REMOTE_TOKEN/);
       return true;
     },
   );

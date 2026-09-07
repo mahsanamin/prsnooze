@@ -111,9 +111,14 @@ async function cmdAdd(rest, flags) {
   } catch (e) {
     // Refusing to add an unverified peer keeps the peer list meaningful: every
     // entry is one that answered at least once, so a later failure is news.
+    // A refusal and an unreachable host need different advice, and printing
+    // both makes each one look wrong. The client already tells them apart.
+    const unreachable = e.code === "UNREACHABLE" || e.code === "TIMEOUT";
     die(
-      `could not reach ${url}: ${e.message}\n` +
-        `${c.dim}The host must set PRSNOOZE_REMOTE_TOKEN and restart, and you need the same token.${c.reset}`,
+      unreachable
+        ? `could not reach ${url}: ${e.message}\n` +
+            `${c.dim}Check the URL, and that the instance is running and reachable from here.${c.reset}`
+        : `${url} refused this: ${e.message}`,
     );
   }
 
@@ -362,11 +367,11 @@ async function cmdResume(rest, flags) {
 function cmdHelp() {
   console.log(`${c.bold}snooze${c.reset} — reach the prsnooze instances your team is running
 
-${c.bold}peers${c.reset}
-  ${c.green}add${c.reset} <url> [--name n] [--token t]   add an instance (verifies it answers first)
-  ${c.green}peers${c.reset}                              list what you have added
+${c.bold}reviewers${c.reset}
+  ${c.green}add${c.reset} <url> [--name n]               add an instance (verifies it answers first)
+  ${c.green}reviewers${c.reset}                          list what you have added (alias: peers)
   ${c.green}remove${c.reset} <name>                      forget one
-  ${c.green}token${c.reset} <shared-token>               save the team's shared token
+  ${c.green}token${c.reset} <shared-token>               only if an instance asks for one
 
 ${c.bold}using them${c.reset}
   ${c.green}status${c.reset} [name] [--usage]            who is free right now
@@ -384,8 +389,9 @@ review session, so resume always goes back to the machine that ran it.
 ${c.yellow}A review runs on the machine you send it to.${c.reset} It spends that host's Claude or
 Codex plan and posts under their GitHub identity. Every dispatch says whose.
 
-The host enables this with ${c.bold}PRSNOOZE_REMOTE_TOKEN${c.reset} in their .env. Without it
-their instance answers 503 and stays local-only.`);
+Most instances need no token: they are as open as their web page, which anyone
+on the same network can already use. A host who wants this surface locked sets
+${c.bold}PRSNOOZE_REMOTE_TOKEN${c.reset} in their .env, and then you need ${c.bold}snooze token${c.reset} too.`);
 }
 
 // --------------------------------------------------------------------- main ---
@@ -393,6 +399,7 @@ their instance answers 503 and stays local-only.`);
 const COMMANDS = {
   add: cmdAdd,
   peers: cmdPeers,
+  reviewers: cmdPeers,
   list: cmdPeers,
   remove: cmdRemove,
   rm: cmdRemove,

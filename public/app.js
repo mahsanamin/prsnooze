@@ -1969,6 +1969,13 @@ function renderCliCard() {
   $("cli-add").textContent = `snooze add ${origin} --name ${name}`;
   $("cli-use").textContent = "snooze status && snooze review <pr-url>";
 
+  // The token step only exists when this instance actually asks for one. Most
+  // do not: the remote API is as open as this page, which the reader is already
+  // looking at without a credential.
+  const gated = !!cfg.remote?.enabled;
+  const tokenStep = document.getElementById("cli-step-token");
+  if (tokenStep) tokenStep.hidden = !gated;
+
   $("cli-token-note").textContent = cfg.host
     ? `Ask ${cfg.host} for it. The same token works for every instance on your team.`
     : "Ask whoever runs this instance for it.";
@@ -1979,26 +1986,27 @@ function renderCliCard() {
     : "Adding checks the instance answers first, so a wrong URL fails now rather than later.";
   addNote.classList.toggle("cli-note-warn", local);
 
-  // Remote control is opt-in, and the steps above are useless until the host
-  // switches it on. Only the host can fix it, so only the host is told how.
+  // What the reader is actually trusted with, stated once. It is the same
+  // whether they use this page or the CLI, which is the point.
   const warn = $("cli-disabled");
-  const enabled = cfg.remote?.enabled;
-  if (enabled) {
+  if (gated) {
     warn.hidden = true;
   } else if (isHost) {
     warn.hidden = false;
     warn.innerHTML =
-      "<strong>Remote access is off on this instance.</strong> Until you turn it on, " +
-      "the commands below are refused with a 503. Add a token to <code>.env</code> and restart:" +
+      "<strong>No token needed.</strong> The commands below work for anyone who can reach this " +
+      "instance, the same as this page. That means they can spend your provider plan and post " +
+      "reviews under your GitHub identity." +
+      '<span class="cli-note">To require a shared secret on the CLI instead, put this in ' +
+      '<code>.env</code> and restart. Lock the page down too, or the secret only covers one of two doors:</span>' +
       '<div class="cli-cmd"><code id="cli-enable">PRSNOOZE_REMOTE_TOKEN=$(openssl rand -hex 32)</code>' +
-      '<button class="cli-copy" type="button" data-copy="cli-enable">Copy</button></div>' +
-      "<span class=\"cli-note\">Anyone holding that token can queue a review here, spending this " +
-      "host's plan and posting under its GitHub identity. Share it deliberately.</span>";
+      '<button class="cli-copy" type="button" data-copy="cli-enable">Copy</button></div>';
   } else {
     warn.hidden = false;
     warn.innerHTML =
-      "<strong>Remote access is off on this instance.</strong> These steps will not work until " +
-      `${escapeHtml(cfg.host || "whoever runs it")} enables it.`;
+      "<strong>No token needed.</strong> Reviews you send here run on " +
+      `${escapeHtml(cfg.host || "this host")}'s machine, spend their provider plan, and post under ` +
+      "their GitHub identity. Same as this page.";
   }
 }
 

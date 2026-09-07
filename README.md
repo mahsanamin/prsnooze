@@ -191,8 +191,8 @@ opening a browser. Ask who has a review slot free, hand a PR to whoever does, an
 resume that review later from the same terminal.
 
 ```sh
-snooze token $TEAM_TOKEN                  # once: the shared secret
-snooze add http://sara-mac:8383           # once per colleague
+snooze add http://sara-mac:8383           # once per colleague, no secret needed
+snooze reviewers                          # who you have added
 snooze status                             # who can take work right now
 snooze review https://github.com/o/r/pull/7
 snooze resume 01a06b8a/job-9f8e           # after the author replies
@@ -209,10 +209,16 @@ sara  01a06b8a  slot free (0/2 running)
 1 of 1 instance has a slot free.
 ```
 
-**The host has to switch this on.** Set `PRSNOOZE_REMOTE_TOKEN` in their `.env`
-and restart. Until then the instance answers `503` on those routes and stays
-local-only, which is the default. The browser page is unaffected either way, so
-sharing the URL over your LAN keeps working exactly as before.
+**No setup on the host, and no token to pass around.** That surprises people, so
+here is the reasoning: the page already accepts an unauthenticated
+`POST /api/review` from anyone who can reach the host, and the CLI asks for the
+same thing from the same people. Requiring a secret on one path and not the
+other bought no protection and cost every colleague a round trip to ask for it.
+
+A host who wants the CLI surface locked sets `PRSNOOZE_REMOTE_TOKEN` in `.env`
+and restarts, and their colleagues then also run `snooze token <value>`. Worth
+knowing: that covers one of two doors. The page still queues reviews with no
+credential, so lock it down as well or the secret is decoration.
 
 **Know what you are spending.** A review runs on the machine you send it to. It
 spends *that* host's Claude or Codex plan and posts the review under *their*
@@ -296,7 +302,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `CONFIDENCE_THRESHOLD` | `80` | Drop findings below this confidence. `0` = show everything. |
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
 | `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). |
-| `PRSNOOZE_REMOTE_TOKEN` | *unset* | Shared secret for the `snooze` CLI's cross-instance API. Unset keeps the instance local-only. |
+| `PRSNOOZE_REMOTE_TOKEN` | *unset* | Optional shared secret for the `snooze` CLI's cross-instance API. Unset leaves it as open as the web page. |
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
 | `REVIEW_PROVIDERS` | `claude,codex` | Provider adapters to offer when their CLI is installed. |
 | `DEFAULT_REVIEW_PROVIDER` | `claude` | Initially selected reviewer. |

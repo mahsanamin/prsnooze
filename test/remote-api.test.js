@@ -72,14 +72,42 @@ const call = async (base, path, { token = TOKEN, method = "GET", body = null, he
   };
 };
 
-test("an instance with no token configured refuses remote control outright", async () => {
+test("with no token configured the CLI is as open as the page, on purpose", async () => {
+  // The page's own POST /api/review takes an unauthenticated request from the
+  // same people and does the same thing. Gating only this surface bought no
+  // protection and cost every colleague a round trip to the host for a secret.
   const s = await serve({ token: "" });
   try {
-    const res = await call(s.base, "/status", { token: null });
-    assert.equal(res.status, 503);
-    assert.equal(res.body.code, "REMOTE_DISABLED");
-    // The message has to name the switch, or the host cannot act on it.
-    assert.match(res.body.error, /PRSNOOZE_REMOTE_TOKEN/);
+    const status = await call(s.base, "/status", { token: null });
+    assert.equal(status.status, 200);
+    assert.equal(status.body.slots.available, true);
+
+    const queued = await call(s.base, "/review", {
+      token: null,
+      method: "POST",
+      body: { prUrl: "https://github.com/o/r/pull/1" },
+    });
+    assert.equal(queued.status, 202);
+    assert.equal(s.calls.review.length, 1);
+    assert.equal(s.calls.review[0].prUrl, "https://github.com/o/r/pull/1");
+  } finally {
+    await s.close();
+  }
+});
+
+test("a host who does configure a token still gets it enforced", async () => {
+  // The opt-in has to actually bite, or setting it is theatre too.
+  const s = await serve();
+  try {
+    assert.equal((await call(s.base, "/status", { token: null })).status, 401);
+    assert.equal((await call(s.base, "/status")).status, 200);
+    const refused = await call(s.base, "/review", {
+      token: null,
+      method: "POST",
+      body: { prUrl: "https://github.com/o/r/pull/1" },
+    });
+    assert.equal(refused.status, 401);
+    assert.deepEqual(s.calls.review, [], "an unauthorized request must never reach the queue");
   } finally {
     await s.close();
   }

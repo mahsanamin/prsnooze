@@ -71,9 +71,22 @@ test("only the host is told how to switch remote access on", () => {
   assert.match(card, /PRSNOOZE_REMOTE_TOKEN=\$\(openssl rand -hex 32\)/);
 });
 
-test("the card says what sharing the token actually costs", () => {
+test("the card says what reaching this instance actually costs", () => {
   // A setup guide that hides the consequence is how someone ends up handing out
-  // control of their machine without realising.
-  assert.match(app, /spending this[\s\S]{0,40}host's plan/);
-  assert.match(app, /GitHub identity/);
+  // control of their machine without realising. Assert the meaning rather than
+  // the sentence, so rewording the copy does not fail this.
+  const card = app.slice(app.indexOf("function renderCliCard"));
+  assert.match(card, /provider plan/, "must say whose plan gets spent");
+  assert.match(card, /GitHub identity/, "must say whose identity signs the review");
+  // Both readers need it: the host who owns the plan, and the colleague spending it.
+  assert.match(card, /spend your provider plan/);
+  assert.match(card, /spend their provider plan/);
+});
+
+test("the token step is hidden unless the instance actually wants a token", () => {
+  // Showing a "get the secret from Ahsan" step on an instance that needs no
+  // secret is exactly the friction this replaced.
+  assert.ok(html.includes('id="cli-step-token" hidden'), "the step must start hidden");
+  const card = app.slice(app.indexOf("function renderCliCard"));
+  assert.match(card, /tokenStep\.hidden = !gated/);
 });

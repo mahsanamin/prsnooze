@@ -50,9 +50,12 @@ adapter contract and AGY checklist are in `docs/provider-adapters.md`.
 The `snooze` CLI lets one machine queue work on another. That makes remote
 control a security surface, not a convenience feature.
 
-- Remote control is opt-in. With no `PRSNOOZE_REMOTE_TOKEN` set, every
-  `/api/remote/*` route answers 503. Never make it default-on, and never fall
-  back to unauthenticated access.
+- The CLI surface and the page must agree on authentication. `POST /api/review`
+  takes an unauthenticated request and queues a review, so gating
+  `/api/remote/*` alone protected nothing while costing every colleague a round
+  trip for a secret. With no `PRSNOOZE_REMOTE_TOKEN` set both are open; setting
+  it gates the CLI surface. Do not re-introduce a token requirement on one path
+  without applying it to the other.
 - Authenticate before any side effect. No remote route may read job data, queue
   a review, or resume one before the token check passes.
 - A missing token and a wrong token get the identical answer, with no detail,
