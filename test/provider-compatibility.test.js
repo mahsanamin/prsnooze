@@ -68,3 +68,43 @@ printf '%s\\n' '{"type":"result","is_error":false,"result":"done","session_id":"
     { kind: "other", raw: { type: "future_event", value: 1 } },
   ]);
 });
+
+// Reproduces a real failure. A colleague's review died with claude reporting
+// "Failed to authenticate: OAuth session expired and could not be refreshed",
+// and the host was shown "Claude exited with code=1 ... Last stderr: (empty)".
+// The provider had said exactly what was wrong; the failure message dropped it.
+function fakeFailingClaude(dir, { message }) {
+  const bin = path.join(dir, "claude-authfail");
+  fs.writeFileSync(bin, `#!/bin/sh
+printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"${message}"}]}}'
+printf '%s\\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":1}'
+exit 1
+`);
+  fs.chmodSync(bin, 0o755);
+  return bin;
+}
+
+test("a provider that explains its own failure has that reason reported", async () => {
+  const { runReviewJob } = require("../lib/review-job");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-authfail-"));
+  const message = "Failed to authenticate: OAuth session expired and could not be refreshed";
+  const bin = fakeFailingClaude(dir, { message });
+
+  // Drive the provider seam directly: the lifecycle around it needs a repo, a
+  // worktree and GitHub, none of which this failure depends on.
+  const { runClaude } = require("../lib/claude-runner");
+  const events = [];
+  const ee = runClaude({ claudeBin: bin, cwd: dir, promptText: "x" });
+  ee.on("event", (e) => events.push(e));
+  const exit = await new Promise((resolve) => ee.on("exit", resolve));
+
+  assert.equal(exit.code, 1);
+  assert.equal((exit.stderrTail || "").trim(), "", "stderr is empty, as it was in the real failure");
+  // The reason has to be somewhere the failure message can find it.
+  const text = events.find((e) => e.kind === "assistant_text")?.text;
+  assert.equal(text, message);
+  assert.ok(
+    events.some((e) => e.kind === "result" && e.isError),
+    "the provider reported an error result",
+  );
+});
