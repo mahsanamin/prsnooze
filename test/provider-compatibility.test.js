@@ -5,8 +5,9 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 
-const { resolveJobProvider } = require("../lib/review-job");
+const { resolveJobProvider, runProviderProcess } = require("../lib/review-job");
 const { runClaude, isSilentClaudeEvent } = require("../lib/claude-runner");
 
 test("a providerless legacy job remains Claude when Codex is the current default", () => {
@@ -84,8 +85,7 @@ exit 1
   return bin;
 }
 
-test("a provider that explains its own failure has that reason reported", async () => {
-  const { runReviewJob } = require("../lib/review-job");
+test("Claude auth failure text is normalized from its JSONL stream", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-authfail-"));
   const message = "Failed to authenticate: OAuth session expired and could not be refreshed";
   const bin = fakeFailingClaude(dir, { message });
@@ -106,5 +106,42 @@ test("a provider that explains its own failure has that reason reported", async 
   assert.ok(
     events.some((e) => e.kind === "result" && e.isError),
     "the provider reported an error result",
+  );
+});
+
+test("a provider's explanation reaches the final non-zero job error", async () => {
+  const message = "Failed to authenticate: OAuth session expired and could not be refreshed";
+  const provider = {
+    id: "claude",
+    label: "Claude",
+    bin: "unused",
+    model: null,
+    run: () => {
+      const ee = new EventEmitter();
+      ee.pid = 123;
+      ee.kill = () => {};
+      process.nextTick(() => {
+        ee.emit("event", { kind: "assistant_text", text: message });
+        ee.emit("event", { kind: "result", isError: true });
+        ee.emit("exit", { code: 1, signal: null, stderrTail: "" });
+      });
+      return ee;
+    },
+  };
+
+  await assert.rejects(
+    () => runProviderProcess({
+      provider,
+      job: {},
+      helpers: { emit: () => {} },
+      options: {},
+      log: () => {},
+    }),
+    (error) => {
+      assert.equal(error.code, "CLAUDE_NONZERO");
+      assert.match(error.message, new RegExp(message));
+      assert.match(error.message, /Last stderr:\n\(empty\)/);
+      return true;
+    },
   );
 });

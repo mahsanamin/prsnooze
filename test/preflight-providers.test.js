@@ -17,7 +17,13 @@ function executable(dir, name, body) {
   return file;
 }
 
-function runPreflight({ defaultProvider, codexWorks, reviewProviders = "claude,codex" }) {
+function runPreflight({
+  defaultProvider,
+  codexWorks,
+  reviewProviders = "claude,codex",
+  claudeAuthBody = `printf '%s' '{"loggedIn":true,"authMethod":"claude.ai","email":"tester@example.com","subscriptionType":"team"}'\n  exit 0`,
+  envFile = "",
+}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-preflight-"));
   const home = path.join(dir, "home");
   const binDir = path.join(dir, "bin");
@@ -28,14 +34,14 @@ function runPreflight({ defaultProvider, codexWorks, reviewProviders = "claude,c
   fs.copyFileSync(path.join(ROOT, "bin", "start.js"), path.join(sandboxRoot, "bin", "start.js"));
   fs.cpSync(path.join(ROOT, "lib"), path.join(sandboxRoot, "lib"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, ".env.example"), path.join(sandboxRoot, ".env.example"));
+  if (envFile) fs.writeFileSync(path.join(sandboxRoot, ".env"), envFile);
 
   // Stands in for a healthy host, so it has to answer `auth status` too. Left
   // as a --version-only stub, the auth check reads "claude 1.0" as its JSON and
   // this harness stops representing a working machine.
   const claude = executable(binDir, "claude", `
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  printf '%s' '{"loggedIn":true,"authMethod":"claude.ai","email":"tester@example.com","subscriptionType":"team"}'
-  exit 0
+  ${claudeAuthBody}
 fi
 printf '%s\\n' 'claude 1.0'`);
   const codex = codexWorks
@@ -49,20 +55,26 @@ if [ "$1" = "auth" ] && [ "$2" = "git-credential" ]; then printf '%s\\n' 'userna
 exit 1`);
   executable(binDir, "ssh", "printf '%s\\n' 'Hi tester! You have successfully authenticated.' >&2; exit 1");
 
+  const childEnv = {
+    ...process.env,
+    HOME: home,
+    PATH: `${binDir}:${process.env.PATH}`,
+    REVIEW_PROVIDERS: reviewProviders,
+    DEFAULT_REVIEW_PROVIDER: defaultProvider,
+    CLAUDE_BIN: claude,
+    CODEX_BIN: codex,
+    PRSNOOZE_HOME: path.join(dir, "data"),
+    PRSNOOZE_GIT_TRANSPORT: "ssh",
+  };
+  // A developer's own shell login must not make the sandbox look healthy.
+  delete childEnv.CLAUDE_CODE_OAUTH_TOKEN;
+  delete childEnv.ANTHROPIC_API_KEY;
+  delete childEnv.ANTHROPIC_AUTH_TOKEN;
+
   return spawnSync(process.execPath, [path.join(sandboxRoot, "bin", "start.js"), "--check"], {
     cwd: sandboxRoot,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      PATH: `${binDir}:${process.env.PATH}`,
-      REVIEW_PROVIDERS: reviewProviders,
-      DEFAULT_REVIEW_PROVIDER: defaultProvider,
-      CLAUDE_BIN: claude,
-      CODEX_BIN: codex,
-      PRSNOOZE_HOME: path.join(dir, "data"),
-      PRSNOOZE_GIT_TRANSPORT: "ssh",
-    },
+    env: childEnv,
   });
 }
 
@@ -138,4 +150,22 @@ test("a logged-in reviewer reports the account, so the tick means something", as
     exit: 0,
   });
   assert.equal(await getProvider("claude").checkAuth({ bin }), "a@b.com, team plan");
+});
+
+test("a Claude service token saved in .env is loaded before preflight", () => {
+  const result = runPreflight({
+    defaultProvider: "claude",
+    codexWorks: true,
+    envFile: "CLAUDE_CODE_OAUTH_TOKEN=file-token\n",
+    claudeAuthBody: `
+if [ "\${CLAUDE_CODE_OAUTH_TOKEN:-}" = "file-token" ]; then
+  printf '%s' '{"loggedIn":true,"authMethod":"oauth_token","email":"service@example.com"}'
+  exit 0
+fi
+printf '%s' '{"loggedIn":false,"authMethod":"none"}'
+exit 1`,
+  });
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /service@example\.com/);
 });

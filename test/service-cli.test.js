@@ -113,3 +113,31 @@ test("stop on an already-stopped server is not an error", { skip: shellless }, a
     box.cleanup();
   }
 });
+
+test("doctor does not mistake a shell-only Claude token for service auth", { skip: shellless }, async () => {
+  const box = await sandbox();
+  const bin = path.join(box.home, "bin");
+  const fakeNode = path.join(bin, "node");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(fakeNode, `#!/bin/sh
+if [ "$2" = "--port" ]; then printf '%s\\n' '${box.port}'; exit 0; fi
+if [ -n "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  printf '%s\\n' 'shell token leaked into service check' >&2
+  exit 9
+fi
+printf '%s\\n' 'service environment confirmed'
+`);
+  fs.chmodSync(fakeNode, 0o755);
+
+  try {
+    const result = await run(["doctor"], {
+      ...box.env,
+      PATH: `${bin}:${box.env.PATH}`,
+      CLAUDE_CODE_OAUTH_TOKEN: "shell-only-token",
+    });
+    assert.match(result.stdout, /service environment confirmed/);
+    assert.doesNotMatch(result.stderr, /shell token leaked/);
+  } finally {
+    box.cleanup();
+  }
+});

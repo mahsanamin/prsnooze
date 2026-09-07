@@ -562,8 +562,15 @@ cmd_uninstall() {
 # setup can be perfect when you test it by hand and broken every night.
 cmd_doctor() {
   printf '\n%schecking prsnooze the way the service sees it%s\n' "$BOLD" "$RST"
-  printf '%s(no ssh-agent, no shell profile)%s\n\n' "$DIM" "$RST"
-  env -u SSH_AUTH_SOCK "$NODE_BIN" "$ROOT/bin/start.js" --check
+  printf '%s(no ssh-agent, no shell profile or shell-only Claude token)%s\n\n' "$DIM" "$RST"
+  # Installed launchd/systemd jobs do not inherit these from the terminal that
+  # runs doctor. Remove them so the check must use persistent credentials or
+  # values saved in prsnooze's .env, exactly as the service will.
+  env -u SSH_AUTH_SOCK \
+      -u CLAUDE_CODE_OAUTH_TOKEN \
+      -u ANTHROPIC_API_KEY \
+      -u ANTHROPIC_AUTH_TOKEN \
+      "$NODE_BIN" "$ROOT/bin/start.js" --check
 }
 
 cmd_help() {

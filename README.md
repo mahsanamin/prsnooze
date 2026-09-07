@@ -105,9 +105,12 @@ If it fails, pick one:
   `bin/prsnooze-service start`. That runs it with `nohup` from your own shell, so
   it keeps your session's keychain access and survives closing the terminal. The
   cost is real: it does not come back after a reboot.
-- **Give Claude a long-lived token.** `claude setup-token` replaces the keychain
-  lookup with a token, which is what a headless service needs. Then
-  `bin/prsnooze-service install` works and you keep automatic restart.
+- **Give Claude a long-lived token.** Run `claude setup-token`, then copy the
+  value it prints into prsnooze's `.env` as
+  `CLAUDE_CODE_OAUTH_TOKEN=<token>`. Keep that file private. Restart with
+  `bin/prsnooze-service restart` (or run `install` if it is not installed yet).
+  The service and its startup check then use the token instead of relying on
+  your interactive login keychain, while automatic restart keeps working.
 
 Codex is unaffected: `codex login` writes to `~/.codex`, which a service reads
 without trouble. If only your Claude reviews fail, this is why.

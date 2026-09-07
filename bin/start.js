@@ -81,6 +81,7 @@ bin/prsnooze-service instead (start / stop / restart / status / install).
 (async () => {
   banner();
   await ensureEnvFile();
+  applyEnvFile();
   if (!FLAG_CHECK) await guardSecondInstance();
   warning();
 
@@ -350,6 +351,18 @@ function transport() {
 function envSetting(key, fallback = "") {
   const { readEnvFile } = require(path.join(ROOT, "lib", "instance.js"));
   return process.env[key] || readEnvFile(ENV_FILE)[key] || fallback;
+}
+
+// Preflight launches the provider CLIs before server.js is required. Load the
+// same .env values into this process first so credentials intended for a
+// headless service (for example CLAUDE_CODE_OAUTH_TOKEN) reach the auth probe
+// as well as the eventual review process. Explicit process environment still
+// wins, matching server.js.
+function applyEnvFile() {
+  const { readEnvFile } = require(path.join(ROOT, "lib", "instance.js"));
+  for (const [key, value] of Object.entries(readEnvFile(ENV_FILE))) {
+    if (!(key in process.env)) process.env[key] = value;
+  }
 }
 
 // Ask `gh auth git-credential` for github.com the way git would.
