@@ -50,20 +50,24 @@ adapter contract and AGY checklist are in `docs/provider-adapters.md`.
 The `snooze` CLI lets one machine queue work on another. That makes remote
 control a security surface, not a convenience feature.
 
-- The CLI surface and the page must agree on authentication. `POST /api/review`
-  takes an unauthenticated request and queues a review, so gating
-  `/api/remote/*` alone protected nothing while costing every colleague a round
-  trip for a secret. With no `PRSNOOZE_REMOTE_TOKEN` set both are open; setting
-  it gates the CLI surface. Do not re-introduce a token requirement on one path
-  without applying it to the other.
-- Authenticate before any side effect. No remote route may read job data, queue
-  a review, or resume one before the token check passes.
-- A missing token and a wrong token get the identical answer, with no detail,
-  the same way the approve password behaves.
+- Judge authentication against the weakest adjacent path. `POST /api/review`
+  already queues an unauthenticated review, so requiring a CLI token by default
+  protected nothing while costing every colleague a round trip for a secret.
+  With no `PRSNOOZE_REMOTE_TOKEN` set, `/api/remote/*` is deliberately open too.
+- A configured `PRSNOOZE_REMOTE_TOKEN` gates only `/api/remote/*`; the browser
+  routes remain open unless the deployment protects the whole service. Never
+  describe that token as access control for the instance or hide the remaining
+  open page path. Full protection needs a deliberate page-auth design or an
+  authenticated reverse proxy/network boundary.
+- When a remote token is configured, authenticate before any side effect. No
+  remote route may read job data, queue a review, or resume one before the token
+  check passes. A missing token and a wrong token get the identical answer,
+  with no detail, the same way the approve password behaves.
 - Compare the token in constant time. Do not use `===` on secrets.
-- Do not add auth to the routes the browser page already calls. Sharing that URL
-  over a LAN with no credential is documented behaviour; remote control is the
-  new capability and gets the new namespace.
+- Do not silently add auth to the routes the browser page already calls.
+  Sharing that URL over a LAN with no credential is current documented
+  behaviour; changing it requires a complete browser authentication flow, not
+  a token check on one endpoint.
 - The browser route and the remote route must share one implementation for
   queueing (`enqueueReview`) and resuming (`resumeReviewJob`). The resume gate,
   its refusal reasons, and what `force` overrides cannot differ by caller.

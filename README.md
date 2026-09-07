@@ -218,14 +218,16 @@ other bought no protection and cost every colleague a round trip to ask for it.
 A host who wants the CLI surface locked sets `PRSNOOZE_REMOTE_TOKEN` in `.env`
 and restarts, and their colleagues then also run `snooze token <value>`. Worth
 knowing: that covers one of two doors. The page still queues reviews with no
-credential, so lock it down as well or the secret is decoration.
+credential, so protect the whole service with an authenticated reverse proxy or
+an equivalent network boundary as well, or the secret is decoration.
 
 **Know what you are spending.** A review runs on the machine you send it to. It
 spends *that* host's Claude or Codex plan and posts the review under *their*
 GitHub identity. That is the point, since a team's idle plans get used instead of
 one person's, but it is never hidden: `snooze add` and `snooze review` both print
-whose account will sign the review. Anyone with the token can queue work on your
-machine, so treat it like a password you are sharing deliberately.
+whose account will sign the review. By default, anyone who can reach the service
+can queue work. If the host configures a CLI token, anyone holding it can use the
+CLI surface, so treat it like a password and share it deliberately.
 
 The CLI records a self-asserted requester label (by default
 `<local-user>@<hostname>`) and the source address on every remotely dispatched

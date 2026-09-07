@@ -10,8 +10,8 @@ const html = fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8");
 const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
 
 // The page has to be able to tell a visitor how to reach THIS instance, which
-// means the config it loads carries the instance's identity, whether remote
-// control is switched on, and the install command. These assertions pin the
+// means the config it loads carries the instance's identity, whether a token
+// is required, and the install command. These assertions pin the
 // contract between server.js and the browser, since nothing else would notice
 // a rename until the card silently rendered blanks.
 
@@ -21,7 +21,7 @@ test("the page is given what it needs to write the setup commands", () => {
   const block = config.slice(0, config.indexOf("});"));
 
   assert.match(block, /instance:\s*\{\s*shortId/, "the page needs the instance short id for refs");
-  assert.match(block, /remote:\s*\{\s*enabled/, "the page needs to know whether remote control is on");
+  assert.match(block, /remote:\s*\{\s*tokenRequired/, "the page needs to know whether a token is required");
   assert.match(block, /installCommand/, "the page needs an install command to show");
 });
 
@@ -63,7 +63,7 @@ test("a host on localhost is warned that the URL is useless to colleagues", () =
   assert.match(app, /LAN or Tailscale/);
 });
 
-test("only the host is told how to switch remote access on", () => {
+test("only the host is shown how to add optional CLI authentication", () => {
   // Matches how the usage chip already behaves: the person who can fix it is
   // the only one who gets the fix.
   const card = app.slice(app.indexOf("function renderCliCard"));
@@ -88,5 +88,17 @@ test("the token step is hidden unless the instance actually wants a token", () =
   // secret is exactly the friction this replaced.
   assert.ok(html.includes('id="cli-step-token" hidden'), "the step must start hidden");
   const card = app.slice(app.indexOf("function renderCliCard"));
-  assert.match(card, /tokenStep\.hidden = !gated/);
+  assert.match(card, /tokenStep\.hidden = !tokenRequired/);
+});
+
+test("a configured CLI token never masquerades as protection for the page", () => {
+  const card = app.slice(app.indexOf("function renderCliCard"));
+  assert.match(card, /if \(tokenRequired\)[\s\S]{0,120}warn\.hidden = false/);
+  assert.match(card, /browser page is still unauthenticated/);
+});
+
+test("the copied add command contains no host-controlled shell argument", () => {
+  const card = app.slice(app.indexOf("function renderCliCard"));
+  assert.match(card, /`snooze add \$\{origin\}`/);
+  assert.doesNotMatch(card, /--name \$\{/);
 });

@@ -64,10 +64,10 @@ const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_R
 // path to get right.
 const APPROVE_PASSWORD = process.env.MANUAL_APPROVE_PASSWORD || "";
 
-// Shared secret for the cross-instance API that `bin/snooze` talks to. Unset
-// means the remote API is off, which is the default: reaching those routes
-// spends this host's provider plan and posts a review under their GitHub
-// identity, so it is opt-in rather than something a rebuild switches on.
+// Optional shared secret for the cross-instance API that `bin/snooze` talks
+// to. Unset leaves that namespace open, matching the page's existing review
+// route. Setting it gates only /api/remote; protecting the whole instance also
+// requires deployment-level access control around the page routes.
 const REMOTE_TOKEN = process.env.PRSNOOZE_REMOTE_TOKEN || "";
 const PKG_VERSION = require("./package.json").version;
 // How a colleague installs the `snooze` CLI, shown in the page. Overridable so
@@ -299,11 +299,11 @@ app.get("/api/config", (req, res) => {
     providers: providerList.map(({ id, label }) => ({ id, label })),
     defaultProvider: DEFAULT_REVIEW_PROVIDER,
     // What the page needs to tell a visitor how to reach THIS instance from
-    // their terminal. `remote.enabled` is not a secret: an unauthenticated
-    // caller already learns it from the 503-vs-401 on /api/remote/*, and the
-    // setup instructions are wrong without it. The token itself is never sent.
+    // their terminal. `remote.tokenRequired` is not a secret: a caller already
+    // learns it from the 200-vs-401 response on /api/remote/*, and the setup
+    // instructions are wrong without it. The token itself is never sent.
     instance: { shortId: shortId(IDENTITY.id), name: IDENTITY.name },
-    remote: { enabled: REMOTE_TOKEN.trim().length > 0 },
+    remote: { tokenRequired: REMOTE_TOKEN.trim().length > 0 },
     installCommand: INSTALL_COMMAND,
     // Nothing about the approve password is reported. The button always shows
     // and always asks, so the client has no state to sync — and whether a

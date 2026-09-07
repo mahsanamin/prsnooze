@@ -1962,19 +1962,20 @@ function renderCliCard() {
   if (!cliBackdrop) return;
   const cfg = cliConfig || {};
   const { origin, local } = peerUrlForCommands();
-  const name = (cfg.instance?.name || cfg.host || "prsnooze").replace(/\s+/g, "-").toLowerCase();
 
   $("cli-install").textContent = cfg.installCommand || "npm install -g github:mahsanamin/prsnooze";
   $("cli-token").textContent = "snooze token <the shared token>";
-  $("cli-add").textContent = `snooze add ${origin} --name ${name}`;
+  // `snooze add` learns the instance name from the server. Omitting --name also
+  // keeps host-controlled display text out of a shell command people paste.
+  $("cli-add").textContent = `snooze add ${origin}`;
   $("cli-use").textContent = "snooze status && snooze review <pr-url>";
 
   // The token step only exists when this instance actually asks for one. Most
   // do not: the remote API is as open as this page, which the reader is already
   // looking at without a credential.
-  const gated = !!cfg.remote?.enabled;
+  const tokenRequired = !!cfg.remote?.tokenRequired;
   const tokenStep = document.getElementById("cli-step-token");
-  if (tokenStep) tokenStep.hidden = !gated;
+  if (tokenStep) tokenStep.hidden = !tokenRequired;
 
   $("cli-token-note").textContent = cfg.host
     ? `Ask ${cfg.host} for it. The same token works for every instance on your team.`
@@ -1987,10 +1988,16 @@ function renderCliCard() {
   addNote.classList.toggle("cli-note-warn", local);
 
   // What the reader is actually trusted with, stated once. It is the same
-  // whether they use this page or the CLI, which is the point.
+  // by default whether they use this page or the CLI. A configured CLI token
+  // does not silently turn into protection for the browser routes.
   const warn = $("cli-disabled");
-  if (gated) {
-    warn.hidden = true;
+  if (tokenRequired) {
+    warn.hidden = false;
+    warn.innerHTML =
+      "<strong>CLI token required.</strong> Ask the host for the shared token before using " +
+      "these commands." +
+      '<span class="cli-note">This browser page is still unauthenticated unless the host ' +
+      "protects the whole service separately.</span>";
   } else if (isHost) {
     warn.hidden = false;
     warn.innerHTML =

@@ -100,7 +100,7 @@ async function cmdAdd(rest, flags) {
   const peerUrl = new URL(url);
   if (peerUrl.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(peerUrl.hostname)) {
     console.log(
-      `${c.yellow}warning: this HTTP peer sends the shared token without TLS; use HTTPS or an encrypted private network such as Tailscale.${c.reset}`,
+      `${c.yellow}warning: this HTTP peer is unencrypted; review details and any configured shared token cross without TLS. Use HTTPS or an encrypted private network such as Tailscale.${c.reset}`,
     );
   }
 

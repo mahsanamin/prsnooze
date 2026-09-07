@@ -20,13 +20,13 @@ const INSTANCE = { id: "01a06b8a-ea9a-7432-9b57-42a1c1563282", name: "sara" };
 
 // A stand-in instance so the CLI is exercised over real HTTP against the real
 // router, not a mocked client.
-function fakeInstance({ available = true } = {}) {
+function fakeInstance({ available = true, token = TOKEN } = {}) {
   const calls = { review: [], resume: [] };
   const app = express();
   app.use(
     "/api/remote",
     createRemoteRouter({
-      token: TOKEN,
+      token,
       identity: INSTANCE,
       describe: async () => ({
         host: "sara",
@@ -145,6 +145,33 @@ test("adding a peer verifies it answers, and records the instance id", async () 
     assert.equal(config.peers.length, 1);
     assert.equal(config.peers[0].shortId, "01a06b8a");
     assert.equal(config.peers[0].instanceId, INSTANCE.id);
+  } finally {
+    await inst.close();
+  }
+});
+
+test("a tokenless instance can be added and sent a review without local token setup", async () => {
+  const inst = await fakeInstance({ token: "" });
+  const { run } = session();
+  try {
+    await run("add", inst.url, "--name", "sara");
+    const { stdout } = await run("review", "https://github.com/o/r/pull/7");
+    assert.match(stdout, /queued/);
+    assert.equal(inst.calls.review.length, 1);
+  } finally {
+    await inst.close();
+  }
+});
+
+test("a gated instance tells a tokenless caller what it needs", async () => {
+  const inst = await fakeInstance();
+  const { run } = session();
+  try {
+    await assert.rejects(run("add", inst.url), (e) => {
+      assert.match(e.stderr, /requires a shared token/);
+      assert.doesNotMatch(e.stderr, /could not reach/);
+      return true;
+    });
   } finally {
     await inst.close();
   }
