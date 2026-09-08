@@ -220,6 +220,20 @@ prsnooze looks for a review playbook in provider-specific project and user locat
 
 (`aa-review-pr` works as an alternate name at both levels.) The page shows which one ran, tagged `[project]` / `[user]` / `[bundled]`. To make reviews match how your team actually reviews, drop a `review-pr/SKILL.md` into your repo — nothing else to configure.
 
+A project skill is read from the PR's **base** branch, not from the PR. A pull request that rewrites the review playbook is reviewed by the old one.
+
+### The project's rules outrank the host's
+
+Reviews run on somebody's laptop, and that used to decide how strict they were: one playbook won, so a repo with its own rules threw the host's away, and a repo with none made the host's personal file the whole standard. Now both go into the prompt, ranked:
+
+| | Governs |
+|---|---|
+| The project's `review-pr/SKILL.md` | Review content. Wins every disagreement. |
+| The host's own `~/.claude/skills/review-pr/SKILL.md` | A layer on top. It can add checks and be stricter. It cannot drop a check, lower a severity, or approve what the project's rules would comment on. |
+| prsnooze's floor | Runs whenever a personal skill is in play: correctness, security, regressions and tests get checked, a real finding keeps its severity, and the repo's own `AGENTS.md` / `CLAUDE.md` / `CONTRIBUTING.md` (read from the base) outrank a personal preference. A project skill is exempt — a repo is allowed to set its own bar. |
+
+Approval is the one place a personal skill is allowed an opinion, in one direction. A skill that says *comment* where the score says approve is followed. A skill that says *approve* where the score says comment is ignored. Strictest answer wins.
+
 Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](docs/provider-adapters.md).
 
 ## Reach your team's other instances from the terminal
@@ -341,7 +355,7 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `MAX_CONCURRENT_REVIEWS` | `1` | Reviews at once. Extra submissions queue. |
 | `CONFIDENCE_THRESHOLD` | `80` | Drop findings below this confidence. `0` = show everything. |
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
-| `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). |
+| `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). Authorises the person; an open critical finding still refuses the approval. |
 | `PRSNOOZE_REMOTE_TOKEN` | *unset* | Optional shared secret for the `snooze` CLI's cross-instance API. Unset leaves it as open as the web page. |
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
 | `REVIEW_PROVIDERS` | `claude,codex` | Provider adapters to offer when their CLI is installed. |
@@ -363,6 +377,19 @@ The button is always there and always live. Clicking it confirms what's about to
 
 Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever compared on the server. Anything that doesn't match comes back *not authorized* — and so does every attempt on a host that never set one, which is the same flow and the same message on purpose: the page your team can reach doesn't get to find out whether approving is configured. Five wrong guesses from one IP locks the endpoint for a minute, doubling up to 30, since a shared password on a reachable page is otherwise guessable at network speed. You can't approve your own PR; GitHub wouldn't allow it anyway.
 
+### The password authorises the person, not the PR
+
+Knowing the password is necessary and not sufficient. Once it matches, prsnooze reads the PR and refuses the approval if:
+
+- a reviewer's **changes-requested** review still stands (only they can clear it);
+- an **unresolved review thread** reads as critical or major — 🔴 / 🟠, "blocker", "must fix", and the like, from anyone;
+- **critical or major findings on the PR's current head** are unanswered, including prsnooze's own from this review;
+- **GitHub can't be reached** to check. That one is held, not guessed: "I couldn't look" is not "there's nothing there".
+
+Nits, minors, plain questions and resolved threads don't block. Neither do findings against a commit the author has since replaced — a review of code that no longer exists says nothing about the code you're approving.
+
+The refusal names what's open and where, and says how to clear it: fix it, or have the reviewer who raised it resolve the thread. **There is no override.** No second password, no force flag, no "approve anyway" — if the finding is wrong, the answer is to talk to whoever owns the host and let them review it themselves. That is the point of the whole gate: the password exists so a colleague can approve a clean PR without you, not so they can stamp over a finding you left.
+
 ## When something goes wrong
 
 - **The page won't load at all** — run `bin/prsnooze-service status`. If it says *stopped*, `bin/prsnooze-service start` brings it back; if it says *supervisor none*, it won't survive the next reboot until you run `install`.
@@ -370,6 +397,7 @@ Set `MANUAL_APPROVE_PASSWORD` to the secret you want to share. It's only ever co
 - **`Permission denied (publickey)` on `git fetch`** — you're on `PRSNOOZE_GIT_TRANSPORT=ssh`, and the running server has no access to your shell's ssh-agent. Drop the setting to use the gh token over HTTPS instead (no key needed), or save the key's passphrase once with `ssh-add --apple-use-keychain ~/.ssh/<your-key>` on macOS. `bin/prsnooze-service doctor` tells you which side is broken.
 - **`Failed to authenticate: OAuth session expired and could not be refreshed`** — the reviewer cannot reach the login keychain, which happens when launchd runs it. `claude auth status` in your terminal will still say you are logged in; that is the tell, not a contradiction. See [Keep it running](#keep-it-running).
 - **`PR is merged, not OPEN`** — it only reviews open PRs.
+- **The password was right and it still didn't approve** — that's the approval gate, not a bug. The dialog lists what's open on the PR. Fix it, resolve the thread, or ask the host's owner to review it. There is no override.
 - **The provider exited non-zero** — the checkout is kept at `~/.prsnooze/worktrees/<job-id>`. Open it and run the selected provider there to inspect the failure.
 - **Every review suddenly fails** — check the usage chip in the top bar first. A spent plan limit looks exactly like a broken tool.
 - **The review feels generic** — it fell back to the bundled playbook. Add a `review-pr/SKILL.md` to your repo; the page tells you which one it used.

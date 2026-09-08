@@ -467,6 +467,16 @@ body::after {
 .confirm-ok { background: linear-gradient(180deg, #6ee7b0, var(--green)); color: #04291a; border: none; font-weight: 700; padding: 8px 17px; border-radius: 9px; cursor: pointer; font-size: 13px; }
 .confirm-ok:hover:not(:disabled) { filter: brightness(1.06); }
 .confirm-ok:disabled { opacity: 0.55; cursor: default; }
+/* The refusal text arrives from the server already laid out — a headline, the
+   blockers as bullets, then what to do about it. Rendered as-is: re-flowing a
+   list of file:line findings into a paragraph is how it stops being readable. */
+.modal-block {
+  margin: 4px 0 0; padding: 12px; border-radius: 10px;
+  background: rgba(8, 9, 13, 0.6); border: 1px solid var(--border-2);
+  color: var(--text); font-size: 12.5px; line-height: 1.55;
+  font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 46vh; overflow-y: auto;
+}
 .modal-card.shake { animation: shake 0.35s; }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
 

@@ -51,6 +51,9 @@ const pwSubmit = $("pw-submit");
 const confirmBackdrop = $("confirm-backdrop");
 const confirmSub = $("confirm-sub");
 const confirmOk = $("confirm-ok");
+const blockedBackdrop = $("blocked-backdrop");
+const blockedBody = $("blocked-body");
+const blockedOk = $("blocked-ok");
 const confirmCancel = $("confirm-cancel");
 
 const LS_SELECTED = "prsnooze:selected";
@@ -1162,6 +1165,21 @@ function pwFail(message) {
   pwForm.classList.remove("shake"); void pwForm.offsetWidth; pwForm.classList.add("shake");
   pwInput.select();
 }
+// The password was accepted and the approval was still refused: a critical
+// comment is open on the PR (409 from /approve). Deliberately not pwFail() —
+// that leaves the password dialog up with the field selected, which says "you
+// typed it wrong" about the one thing that was right. The password step is
+// finished and closed; what's left is a PR that isn't ready.
+function openBlocked(message) {
+  if (!blockedBackdrop) { showToast(escapeHtml(message)); return; }
+  blockedBody.textContent = message;
+  blockedBackdrop.hidden = false;
+  setTimeout(() => blockedOk?.focus(), 30);
+}
+function closeBlocked() {
+  if (blockedBackdrop) blockedBackdrop.hidden = true;
+}
+
 function setPwVisible(show) {
   pwInput.type = show ? "text" : "password";
   if (!pwEye) return;
@@ -1190,6 +1208,16 @@ async function approveReview(id, password) {
       // wrong or the host never set one). Stay put so it can be retyped.
       if (r.status === 401 || r.status === 429) {
         pwFail(data.error || "Not authorized.");
+        return;
+      }
+      // 409 = authorised, but the PR isn't approvable: changes requested, or a
+      // critical comment nobody has resolved. The server words it and lists
+      // what's open, so show that verbatim and stop offering the click.
+      if (r.status === 409) {
+        closePassword();
+        openBlocked(data.error || "This PR can't be approved yet.");
+        loadPrState(rev, { force: true });
+        renderHead(rev);
         return;
       }
       // Anything else is about the PR, not the password.
@@ -1232,9 +1260,15 @@ if (pwForm) pwForm.addEventListener("submit", (e) => {
 if (pwCancel) pwCancel.addEventListener("click", closePassword);
 if (pwBackdrop) pwBackdrop.addEventListener("click", (e) => { if (e.target === pwBackdrop) closePassword(); });
 if (pwEye) pwEye.addEventListener("click", () => { setPwVisible(pwInput.type === "password"); pwInput.focus(); });
+
+if (blockedOk) blockedOk.addEventListener("click", closeBlocked);
+if (blockedBackdrop) blockedBackdrop.addEventListener("click", (e) => { if (e.target === blockedBackdrop) closeBlocked(); });
+
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  // Innermost first: the password step sits on top of the confirmation.
+  // Innermost first: the refusal replaces the password step, which sits on top
+  // of the confirmation.
+  if (blockedBackdrop && !blockedBackdrop.hidden) { closeBlocked(); return; }
   if (pwBackdrop && !pwBackdrop.hidden) { closePassword(); return; }
   if (confirmBackdrop && !confirmBackdrop.hidden) { closeConfirm(); return; }
 });
@@ -1585,7 +1619,9 @@ function entrySpec(ev) {
       return { cat: "info", icon: "📁", label: "worktree", body: `<span class="dim">${escapeHtml(ev.path || "")}${at ? ` @ ${escapeHtml(at)}` : ""}</span>` };
     }
     case "interrupted": return { cat: "warn", icon: "⏸", label: "interrupted", body: escapeHtml(ev.message || "interrupted") };
-    case "skill_resolved": { const tag = ev.source === "project" ? "project" : ev.source === "user" ? "user" : ev.source === "bundled" ? "bundled" : ""; return { cat: "ok", icon: "🧩", label: "skill", body: `<strong>${escapeHtml(ev.name || "")}</strong> <span class="tag">${escapeHtml(tag)}</span> <span class="dim">${escapeHtml(ev.pathDisplay || ev.path || "")}</span>` }; }
+    // The subordinate layer is shown on the same line, because "which rules did
+    // this review run under" is one answer, not two events to correlate.
+    case "skill_resolved": { const tag = ev.source === "project" ? "project" : ev.source === "user" ? "user" : ev.source === "bundled" ? "bundled" : ""; const sub = ev.subordinate ? ` <span class="dim">+ ${escapeHtml(ev.subordinate.name || "")} (host's own, ranked below)</span>` : ""; return { cat: "ok", icon: "🧩", label: "skill", body: `<strong>${escapeHtml(ev.name || "")}</strong> <span class="tag">${escapeHtml(tag)}</span> <span class="dim">${escapeHtml(ev.pathDisplay || ev.path || "")}</span>${sub}` }; }
     case "skill_missing": return { cat: "warn", icon: "🧩", label: "skill", body: `<strong>no project skill</strong> — generic review ${details("paths searched", (ev.attempted || []).join("\n"))}` };
     case "approval_policy": { const v = ev.autoApprove ? "eligible" : "disabled"; const mt = Array.isArray(ev.matchedTests) && ev.matchedTests.length > 0 ? ` <span class="tag">matched tests: ${ev.matchedTests.length}</span>` : ""; return { cat: "pr", icon: "🛂", label: "approval", body: `<strong>${escapeHtml(v)}</strong> <span class="dim">${escapeHtml(ev.reason || "")}</span>${mt}` }; }
     case "rubric": { const tier = ev.score <= 20 ? "approve" : ev.score > 60 ? "high-risk" : "comment"; const hits = Array.isArray(ev.hits) && ev.hits.length ? ` hits=[${ev.hits.map(escapeHtml).join(",")}]` : ""; const reds = Array.isArray(ev.reducers) && ev.reducers.length ? ` reducers=[${ev.reducers.map(escapeHtml).join(",")}]` : ""; return { cat: "pr", icon: "📊", label: "rubric", body: `<strong>${escapeHtml(tier)}</strong> <span class="dim">score=${ev.score}${hits}${reds}</span>` }; }

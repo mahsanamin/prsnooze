@@ -21,10 +21,34 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-approve-"));
 const GH_LOG = path.join(tmp, "gh.log");
 const bin = path.join(tmp, "bin");
 fs.mkdirSync(bin);
+// A clean PR: open, nobody's changes requested, no unresolved thread. The
+// graphql arm is what the forced-approve gate reads — without it every approval
+// here would come back 409 "couldn't check", which is the gate working, not the
+// password flow this file is about.
+const CLEAN_PR = JSON.stringify({
+  data: {
+    repository: {
+      pullRequest: {
+        number: 7,
+        state: "OPEN",
+        isDraft: false,
+        reviewDecision: null,
+        headRefOid: "deadbeef",
+        author: { login: "someone-else" },
+        reviewThreads: { nodes: [] },
+        reviews: { nodes: [] },
+        latestOpinionatedReviews: { nodes: [] },
+      },
+    },
+  },
+});
 fs.writeFileSync(
   path.join(bin, "gh"),
   `#!/bin/sh\necho "$@" >> ${JSON.stringify(GH_LOG)}\n` +
-    `case "$1" in\n  api) echo host-bot ;;\n  *) echo '{"number":7,"state":"OPEN"}' ;;\nesac\n`,
+    `case "$1 $2" in\n` +
+    `  "api graphql") echo ${JSON.stringify(CLEAN_PR)} ;;\n` +
+    `  *) case "$1" in\n       api) echo host-bot ;;\n       *) echo '{"number":7,"state":"OPEN"}' ;;\n     esac ;;\n` +
+    `esac\n`,
   { mode: 0o755 },
 );
 process.env.PATH = `${bin}:${process.env.PATH}`;

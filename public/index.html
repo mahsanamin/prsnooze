@@ -271,6 +271,25 @@
       </div>
     </div>
 
+    <!-- Step three, when it happens: the password was right and the approval
+         was still refused, because a critical comment is open. Its own dialog
+         rather than the password error line — that line means "retype it", and
+         retyping is exactly the wrong next move here. -->
+    <div id="blocked-backdrop" class="modal-backdrop" hidden>
+      <div id="blocked-modal" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="blocked-title">
+        <div id="blocked-title" class="modal-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" /><path d="M12 8v5" /><path d="M12 16.5v.01" />
+          </svg>
+          Approval refused
+        </div>
+        <pre id="blocked-body" class="modal-block"></pre>
+        <div class="modal-actions">
+          <button id="blocked-ok" type="button" class="modal-cancel">Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Pure, testable, and needed by app.js's first render. -->
     <script src="/can-approve.js"></script>
     <script src="/app.js"></script>

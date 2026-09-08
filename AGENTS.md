@@ -45,6 +45,54 @@ adapter contract and AGY checklist are in `docs/provider-adapters.md`.
   is not proof that GitHub accepted a review.
 - Never offer resume when no resumable session ID was recorded.
 
+## Rule precedence
+
+Two things decide a review: the rules it runs under, and whether it may approve.
+Both used to depend on which developer's machine ran it. Keep them ranked.
+
+- The project's review skill governs review CONTENT and wins every disagreement.
+  A host's user-level skill is a subordinate layer: it may add checks and be
+  stricter, and it may never drop a check, lower a severity, or approve what the
+  project's rules would comment on. Both are inlined; do not merge them into one
+  section, and do not let position in the prompt carry the ranking.
+- `PROJECT FLOOR` is emitted only when a personal skill is in the prompt. A
+  project skill is exempt on purpose: a repo may set its own bar, including a
+  lower one. The floor exists for the machine-dependent case, not to overrule a
+  repo.
+- Read the repo's own `AGENTS.md` / `CLAUDE.md` / `CONTRIBUTING.md` from the
+  base revision, for the same reason the project skill is read from the base.
+- A skill may move the approve-vs-comment answer one way only. Stricter is
+  honoured, looser is ignored. Do not make this symmetric "for consistency".
+
+## Forced approval
+
+`MANUAL_APPROVE_PASSWORD` authorises a PERSON. It has never certified a PR, and
+until `lib/approval-gate.js` existed nothing else did either — anyone with the
+password could approve a PR prsnooze had just flagged critical.
+
+- The password check stays before the job lookup (no id enumeration). The
+  fitness gate runs after it, so a refusal reveals nothing to an unauthorised
+  caller.
+- A refused approval returns 409, not 401/403. The browser keys off that to
+  close the password dialog instead of re-asking for a password that was right.
+- Refuse while a changes-requested review stands, an unresolved thread reads
+  critical/major, or critical/major findings sit on the current head. Nits,
+  minors, questions and resolved threads do not block.
+- Findings against a superseded commit do not block. That is the one give in the
+  gate, and it is what stops every commented PR deadlocking. Keep the head-SHA
+  comparison; do not widen it to any past review.
+- An unreachable GitHub REFUSES here, unlike `canApprovePr()` in the browser,
+  which fails open. One decides whether to offer a click, the other whether an
+  approval lands.
+- Severity is read out of free-form text, so it is fuzzy by nature. Keep the
+  bias: an ambiguous match refuses an approval and never grants one. Negations
+  ("no critical issues") and fenced code must stay excluded — prsnooze's own
+  approving bodies talk in the negative, and reviewers paste snippets.
+- There is no override, and adding one undoes the feature. A wrong finding is
+  answered by a human review, not a second password or a `force` flag.
+- Every refusal must say what is open, how to clear it, and who to ask instead.
+  An unactionable refusal sends people looking for a way around it.
+
 ## Cross-instance invariants
 
 The `snooze` CLI lets one machine queue work on another. That makes remote

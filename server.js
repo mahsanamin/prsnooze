@@ -14,7 +14,8 @@ const { v4: uuidv4 } = require("uuid");
 const { Queue } = require("./lib/queue");
 const { runReviewJob, runVerifyJob } = require("./lib/review-job");
 const { createProvider, discoverProvidersSync, providerIds } = require("./lib/providers");
-const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate } = require("./lib/github");
+const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResumability, resumeGate, fetchApprovalSignals } = require("./lib/github");
+const { assessForcedApproval } = require("./lib/approval-gate");
 const { loadIdentity, shortId } = require("./lib/instance-identity");
 const { createRemoteRouter, createAttemptLimiter } = require("./lib/remote-api");
 
@@ -705,6 +706,12 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
 // is even looked up, so an unauthorised caller can't use this endpoint to find
 // out which job ids exist, and a host with no password configured answers the
 // same way a wrong guess does.
+//
+// Getting the password right is necessary and not sufficient. It authorises the
+// person, then lib/approval-gate.js decides whether the PR is fit to approve,
+// and refuses while a critical comment from anyone is still open. There is no
+// second password that overrides that — the way past it is to fix the finding
+// or resolve the thread.
 app.post("/api/jobs/:id/approve", async (req, res) => {
   const ip = req.ip || req.socket?.remoteAddress || "unknown";
   const throttled = approveThrottle(ip);
@@ -721,9 +728,36 @@ app.post("/api/jobs/:id/approve", async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
   if (!job.prUrl) return res.status(400).json({ error: "no PR URL on this job" });
-  // Reject approving your own PR up front (gh would also refuse).
-  if (HOST_LOGIN && job.prMeta?.authorLogin && HOST_LOGIN === job.prMeta.authorLogin) {
-    return res.status(400).json({ error: "you can't approve your own PR" });
+
+  // Authorised, but is the PR fit to approve? The password says who may
+  // approve here; it deliberately does not say that an open 🔴 finding can be
+  // stamped over. Own-PR lives inside the gate now so every refusal comes back
+  // in one shape, and so there is one place to read the whole policy.
+  const gate = assessForcedApproval({
+    signals: await fetchApprovalSignals(job.prUrl),
+    job,
+    hostLogin: HOST_LOGIN,
+    hostName: HOST_NAME,
+  });
+  if (!gate.allowed) {
+    // Recorded on the job, not just returned: a refused approval is the most
+    // interesting thing that can happen on this endpoint, and "I typed the
+    // password and nothing happened" needs to be answerable afterwards.
+    pushEvent(job.id, {
+      ts: Date.now(),
+      kind: "log",
+      message: `Approval refused (${gate.code}): ${gate.reason}.`,
+    });
+    persistJob(job);
+    // 409, not 401/403: the password was right. The browser keys off this to
+    // close the password dialog and show the finding list instead of asking
+    // for the password again, which is what a 401 would mean.
+    return res.status(409).json({
+      error: gate.message,
+      code: gate.code,
+      reason: gate.reason,
+      blockers: gate.blockers,
+    });
   }
   try {
     // Array args (no shell) — job.prUrl was validated by parsePrUrl at creation.
