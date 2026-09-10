@@ -352,10 +352,11 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 |---|---|---|
 | `PORT` | `8284` | HTTP port |
 | `AUTO_APPROVE` | `true` | Allow it to approve clean, low-risk PRs. `false` = always just comment. |
-| `MAX_CONCURRENT_REVIEWS` | `1` | Reviews at once. Extra submissions queue. |
+| `MAX_CONCURRENT_REVIEWS` | `1` | Initial reviews-at-once value for a new data home. The avatar settings menu persists later changes. |
 | `CONFIDENCE_THRESHOLD` | `80` | Drop findings below this confidence. `0` = show everything. |
 | `SKIP_IF_ALREADY_REVIEWED` | `true` | Don't re-review a commit you've already reviewed. |
 | `MANUAL_APPROVE_PASSWORD` | *unset* | Password for the manual **Approve PR** button (see below). Authorises the person; an open critical finding still refuses the approval. |
+| `PRSNOOZE_SETTINGS_PASSWORD` | *unset* | Separate password for changing the instance picture, locking intake, setting the plan-usage floor, and changing concurrency. Unset makes settings read-only. |
 | `PRSNOOZE_REMOTE_TOKEN` | *unset* | Optional shared secret for the `snooze` CLI's cross-instance API. Unset leaves it as open as the web page. |
 | `PRSNOOZE_HOME` | `~/.prsnooze` | Where clones, worktrees and review history live. |
 | `REVIEW_PROVIDERS` | `claude,codex` | Provider adapters to offer when their CLI is installed. |
@@ -368,6 +369,28 @@ Everything has a working default. Copy `.env.example` to `.env` only if you want
 | `PRSNOOZE_TRUST_CLONES` | `true` | Mark prsnooze's own clones as trusted workspaces in `~/.claude.json`, so the reviewed repo's `.claude/` is honored. `false` = never touch that file. |
 | `PRSNOOZE_HOST` | *detected* | The name the page shows — "on Ada's machine" by the logo, and the browser tab title. Falls back to `git config user.name`, then the OS username, then the hostname. |
 | `HERO_IMAGE` | *unset* | Optional background image. Unset, the page draws its own night sky. |
+
+## Instance picture and review intake
+
+The large picture beside the PRSnooze logo identifies whose machine, GitHub
+identity, and provider plan will handle a review. Every data home receives one
+of 20 stable, distinct defaults; click the picture to choose another or upload
+a PNG, JPEG, or WebP. Uploaded pictures are resized in the browser and stored
+under `PRSNOOZE_HOME`, not in the repository.
+
+The same menu controls admission at runtime. It can stop accepting new and
+resumed reviews without interrupting work already queued or running, allow one
+to four simultaneous reviews, require a minimum percentage of the Claude plan
+to remain. Claude reviews are always refused while the active model is Fable. The Fable
+guard fails closed if PRSnooze cannot confirm Claude's current model; a configured
+usage floor similarly fails closed when Claude cannot report its plan windows.
+Providers that do not expose plan telemetry are not measured against that floor.
+
+These controls require `PRSNOOZE_SETTINGS_PASSWORD`, which is deliberately
+separate from `MANUAL_APPROVE_PASSWORD`. Saving a setting never grants permission
+to approve a PR, and the settings password is not stored in the browser.
+
+Default profile art uses [Personas by Draftbit via DiceBear](https://www.dicebear.com/styles/personas/), licensed under CC BY 4.0.
 
 ## Approving by hand
 

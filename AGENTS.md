@@ -135,6 +135,26 @@ control a security surface, not a convenience feature.
 - Reading plan usage shells out to a provider CLI, so keep it opt-in
   (`?usage=1`). A status sweep across peers must not pay for it by default.
 
+## Instance settings and admission
+
+- `PRSNOOZE_SETTINGS_PASSWORD` is separate from
+  `MANUAL_APPROVE_PASSWORD`. The former protects host configuration; it never
+  authorises a GitHub review or weakens the forced-approval fitness gate.
+- Browser and remote submissions, including resume, must pass one shared
+  server-side admission policy. A disabled browser button is only presentation.
+- Locking intake or lowering concurrency never cancels queued or running work.
+  A runtime concurrency increase should drain the existing queue immediately.
+- Fable protection checks the active Claude model immediately before admission
+  and fails closed when it cannot confirm the model. Never infer a model from
+  the CLI's catalogue of available aliases.
+- A configured usage floor fails closed when a provider that supports plan
+  telemetry cannot report it. Providers with no telemetry remain explicitly
+  unsupported and are not measured against invented numbers. A normal Claude
+  review ignores the separate Fable quota window.
+- Runtime settings and custom avatars live under `PRSNOOZE_HOME`, never in the
+  repository. Accept only raster avatar uploads, cap their decoded size, and
+  authenticate before writing either the image or settings file.
+
 ## Codex stream invariants
 
 These rules come from a real `codex exec --json` review, not only a fixture:

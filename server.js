@@ -18,6 +18,15 @@ const { parsePrUrl, getSelfLogin, fetchPrState, fetchResumeSignals, assessResuma
 const { assessForcedApproval } = require("./lib/approval-gate");
 const { loadIdentity, shortId } = require("./lib/instance-identity");
 const { createRemoteRouter, createAttemptLimiter } = require("./lib/remote-api");
+const {
+  AVATAR_FILE,
+  loadSettings,
+  normalizeSettings,
+  publicSettings,
+  saveCustomAvatar,
+  saveSettings,
+} = require("./lib/instance-settings");
+const { isFableModel, tightestUsageWindow } = require("./lib/admission-policy");
 
 // --- env ---
 loadDotenv(path.join(__dirname, ".env"));
@@ -64,6 +73,9 @@ const MAX_CONCURRENT_REVIEWS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_R
 // reach shouldn't advertise whether approving is configured, and one path is one
 // path to get right.
 const APPROVE_PASSWORD = process.env.MANUAL_APPROVE_PASSWORD || "";
+// A separate administrator secret protects instance settings. It is not an
+// approval credential and never authorises a GitHub action.
+const SETTINGS_PASSWORD = process.env.PRSNOOZE_SETTINGS_PASSWORD || "";
 
 // Optional shared secret for the cross-instance API that `bin/snooze` talks
 // to. Unset leaves that namespace open, matching the page's existing review
@@ -106,6 +118,11 @@ for (const d of [REPOS_DIR, WORKTREES_DIR, JOBS_DIR]) {
 // The stable name a colleague's CLI reaches this instance by. Read once at
 // boot, after the data dir exists so the first run can persist it.
 const IDENTITY = loadIdentity({ dataHome: DATA_HOME, name: HOST_NAME });
+let runtimeSettings = loadSettings({
+  dataHome: DATA_HOME,
+  instanceId: IDENTITY.id,
+  initialConcurrency: MAX_CONCURRENT_REVIEWS,
+});
 
 // --- in-memory job state ---
 // jobs: id -> { id, prUrl, createdAt, state, events: [...], prMeta?, worktreePath?, error? }
@@ -178,7 +195,7 @@ const queue = new Queue(
       ? runVerifyJob(job, helpers, cfg)
       : runReviewJob(job, helpers, cfg);
   },
-  { concurrency: MAX_CONCURRENT_REVIEWS },
+  { concurrency: runtimeSettings.maxConcurrentReviews },
 );
 
 queue.on("job", ({ jobId, event }) => pushEvent(jobId, event));
@@ -275,15 +292,19 @@ app.use(express.static(PUBLIC_DIR, { index: false }));
 //
 // An unset password can't match anything — including an empty guess, which is
 // what the early return is for.
-const APPROVE_SALT = crypto.randomBytes(16);
 const scrypt = promisify(crypto.scrypt);
-let configuredHash = null; // computed once, on the first attempt
-async function passwordMatches(input) {
-  if (!APPROVE_PASSWORD || !input) return false;
-  if (!configuredHash) configuredHash = scrypt(APPROVE_PASSWORD, APPROVE_SALT, 32);
-  const [got, want] = await Promise.all([scrypt(String(input), APPROVE_SALT, 32), configuredHash]);
-  return crypto.timingSafeEqual(got, want);
+function createPasswordMatcher(secret) {
+  const salt = crypto.randomBytes(16);
+  let configuredHash = null;
+  return async (input) => {
+    if (!secret || !input) return false;
+    if (!configuredHash) configuredHash = scrypt(secret, salt, 32);
+    const [got, want] = await Promise.all([scrypt(String(input), salt, 32), configuredHash]);
+    return crypto.timingSafeEqual(got, want);
+  };
 }
+const passwordMatches = createPasswordMatcher(APPROVE_PASSWORD);
+const settingsPasswordMatches = createPasswordMatcher(SETTINGS_PASSWORD);
 function isLoopback(req) {
   const ip = req.socket.remoteAddress || "";
   return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
@@ -296,7 +317,7 @@ app.get("/api/config", (req, res) => {
     host: HOST_NAME,
     isHost: isLoopback(req),
     hostLogin: HOST_LOGIN,
-    concurrent: MAX_CONCURRENT_REVIEWS > 1,
+    concurrent: queue.concurrency > 1,
     providers: providerList.map(({ id, label }) => ({ id, label })),
     defaultProvider: DEFAULT_REVIEW_PROVIDER,
     // What the page needs to tell a visitor how to reach THIS instance from
@@ -306,9 +327,20 @@ app.get("/api/config", (req, res) => {
     instance: { shortId: shortId(IDENTITY.id), name: IDENTITY.name },
     remote: { tokenRequired: REMOTE_TOKEN.trim().length > 0 },
     installCommand: INSTALL_COMMAND,
+    ...publicSettings(runtimeSettings),
     // Nothing about the approve password is reported. The button always shows
     // and always asks, so the client has no state to sync — and whether a
     // password is configured isn't the browser's business.
+  });
+});
+
+app.get("/api/profile/avatar", (_req, res) => {
+  if (runtimeSettings.avatar.kind !== "custom") return res.status(404).end();
+  const avatarPath = path.join(DATA_HOME, AVATAR_FILE);
+  res.set("Cache-Control", "no-store");
+  res.type(runtimeSettings.avatar.mime);
+  res.sendFile(avatarPath, (error) => {
+    if (error && !res.headersSent) res.status(error.statusCode || 404).end();
   });
 });
 
@@ -391,11 +423,87 @@ const approveLimiter = createAttemptLimiter();
 const approveThrottle = (ip) => approveLimiter.check(ip);
 const approveFailed = (ip) => approveLimiter.failed(ip);
 const approveSucceeded = (ip) => approveLimiter.succeeded(ip);
+const settingsLimiter = createAttemptLimiter();
+
+app.post("/api/settings", async (req, res) => {
+  const source = req.ip || req.socket.remoteAddress || "unknown";
+  const throttled = settingsLimiter.check(source);
+  if (throttled.blocked) {
+    res.set("Retry-After", String(Math.max(1, Math.ceil(throttled.retryAfterMs / 1000))));
+    return res.status(429).json({ error: "Too many attempts — try again later.", code: "RATE_LIMITED" });
+  }
+  if (!(await settingsPasswordMatches(req.body?.password))) {
+    settingsLimiter.failed(source);
+    return res.status(401).json({ error: "Not authorized — that settings password doesn't match." });
+  }
+  settingsLimiter.succeeded(source);
+
+  try {
+    const next = normalizeSettings(
+      {
+        ...runtimeSettings,
+        acceptingReviews: req.body?.acceptingReviews ?? runtimeSettings.acceptingReviews,
+        minUsageRemainingPct: req.body?.minUsageRemainingPct ?? runtimeSettings.minUsageRemainingPct,
+        maxConcurrentReviews: req.body?.maxConcurrentReviews ?? runtimeSettings.maxConcurrentReviews,
+        avatar: req.body?.avatarId ? { kind: "preset", id: req.body.avatarId } : runtimeSettings.avatar,
+      },
+      { instanceId: IDENTITY.id, initialConcurrency: MAX_CONCURRENT_REVIEWS },
+    );
+    if (req.body?.avatarDataUrl) {
+      next.avatar = saveCustomAvatar(DATA_HOME, req.body.avatarDataUrl, runtimeSettings.avatar.version);
+    }
+    saveSettings(DATA_HOME, next);
+    runtimeSettings = next;
+    queue.setConcurrency(next.maxConcurrentReviews);
+    broadcastSettings();
+    res.json(publicSettings(runtimeSettings));
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Could not save settings." });
+  }
+});
 
 // Queue one review. Shared by the browser route and the remote API so the two
 // can never drift on what counts as a valid submission, which provider a job
 // lands on, or what gets persisted.
-function enqueueReview({ prUrl, provider: requested, requestedBy = null } = {}) {
+async function enforceAdmission(provider) {
+  if (!runtimeSettings.acceptingReviews) {
+    throw httpError(423, "This PRSnooze instance is not accepting new reviews.", "REVIEW_INTAKE_LOCKED");
+  }
+
+  let model = null;
+  const floor = runtimeSettings.minUsageRemainingPct;
+  if (provider.id === "claude") {
+    model = await provider.getModel?.({ bin: provider.bin, model: provider.model, force: true })
+      .catch(() => ({ ok: false, reason: "unavailable" }));
+    if (!model?.ok || !model.name || model.stale) {
+      throw httpError(503, "Could not confirm the Claude model, so the configured model and usage guards refused this review.", "MODEL_UNAVAILABLE");
+    }
+    if (isFableModel(model.name)) {
+      throw httpError(409, "Reviews are paused while Claude is using Fable because it can consume the host's plan quickly.", "FABLE_MODEL_BLOCKED");
+    }
+  }
+
+  if (floor > 0 && provider.getUsage) {
+    const usage = await provider.getUsage({ bin: provider.bin, model: provider.model, force: true })
+      .catch(() => ({ ok: false, reason: "unavailable" }));
+    if (!usage?.ok || usage.stale) {
+      throw httpError(503, "Could not read plan usage, so the configured usage guard refused this review.", "USAGE_UNAVAILABLE");
+    }
+    const tightest = tightestUsageWindow(usage.windows, { fable: isFableModel(model?.name) });
+    if (!tightest) {
+      throw httpError(503, "The provider did not report a usable plan window, so the usage guard refused this review.", "USAGE_UNAVAILABLE");
+    }
+    if (Number(tightest.leftPct) < floor) {
+      throw httpError(
+        429,
+        `Only ${tightest.leftPct}% remains in ${tightest.label}; this instance requires at least ${floor}% before accepting a review.`,
+        "USAGE_FLOOR_REACHED",
+      );
+    }
+  }
+}
+
+async function enqueueReview({ prUrl, provider: requested, requestedBy = null } = {}) {
   const provider = String(requested || DEFAULT_REVIEW_PROVIDER).toLowerCase();
   if (!prUrl) throw httpError(400, "prUrl is required");
   if (!PROVIDERS.has(provider)) {
@@ -407,6 +515,7 @@ function enqueueReview({ prUrl, provider: requested, requestedBy = null } = {}) 
   } catch (e) {
     throw httpError(400, e.message, "BAD_PR_URL");
   }
+  await enforceAdmission(PROVIDERS.get(provider));
   const id = uuidv4();
   const job = {
     id,
@@ -431,12 +540,12 @@ function httpError(status, message, code = undefined) {
   return err;
 }
 
-app.post("/api/review", (req, res) => {
+app.post("/api/review", async (req, res) => {
   try {
-    const result = enqueueReview({ prUrl: req.body?.prUrl, provider: req.body?.provider });
+    const result = await enqueueReview({ prUrl: req.body?.prUrl, provider: req.body?.provider });
     res.status(202).json(result);
   } catch (e) {
-    res.status(e.status || 400).json({ error: e.message });
+    res.status(e.status || 400).json({ error: e.message, code: e.code });
   }
 });
 
@@ -640,6 +749,9 @@ async function resumeReviewJob(jobId, { force = false, requestedBy = null } = {}
   if (isJobActive(job)) {
     throw httpError(409, "this review is already running", "ALREADY_RUNNING");
   }
+  const provider = PROVIDERS.get(job.provider || "claude");
+  if (!provider) throw httpError(400, "the review provider is no longer available", "UNKNOWN_PROVIDER");
+  await enforceAdmission(provider);
   // Don't burn a provider session on a PR that's already approved or untouched
   // since the last look — but that's advice, not a veto: `force` overrides it,
   // and the reason is handed back so the UI can explain what it's overriding.
@@ -692,6 +804,7 @@ app.post("/api/jobs/:id/verify", async (req, res) => {
   } catch (e) {
     res.status(e.status || 400).json({
       error: e.message,
+      code: e.code,
       assessment: e.assessment,
       forcible: e.forcible,
     });
@@ -835,6 +948,16 @@ function broadcastJobs() {
   }
 }
 
+function broadcastSettings() {
+  if (!wss) return;
+  const msg = JSON.stringify({ type: "settings", ...publicSettings(runtimeSettings) });
+  for (const client of wss.clients) {
+    if (client.readyState === 1 /* OPEN */) {
+      try { client.send(msg); } catch {}
+    }
+  }
+}
+
 function attachWebSocket(srv) {
   const w = new WebSocketServer({ server: srv, path: "/ws" });
   w.on("connection", (client) => {
@@ -867,12 +990,13 @@ async function describeInstance({ includeUsage = false } = {}) {
     version: PKG_VERSION,
     providers: providerList.map(({ id, label }) => ({ id, label })),
     defaultProvider: DEFAULT_REVIEW_PROVIDER,
+    ...publicSettings(runtimeSettings),
     slots: {
       capacity: q.concurrency,
       running: q.running,
       queued: q.pending.length,
       free,
-      available: free > 0,
+      available: free > 0 && runtimeSettings.acceptingReviews,
     },
   };
   if (includeUsage) {
@@ -903,8 +1027,12 @@ function start(port = PORT, { banner = false } = {}) {
       console.log(`  auto-approve clean PRs: ${AUTO_APPROVE}`);
       console.log(`  confidence threshold: ${CONFIDENCE_THRESHOLD}%`);
       console.log(`  skip if self-reviewed: ${SKIP_IF_ALREADY_REVIEWED}`);
-      console.log(`  concurrent reviews: ${MAX_CONCURRENT_REVIEWS > 1 ? `up to ${MAX_CONCURRENT_REVIEWS}` : "off — one at a time"}`);
+      console.log(`  concurrent reviews: ${queue.concurrency > 1 ? `up to ${queue.concurrency}` : "off — one at a time"}`);
+      console.log(`  accepting reviews: ${runtimeSettings.acceptingReviews ? "yes" : "locked"}`);
+      console.log(`  usage floor: ${runtimeSettings.minUsageRemainingPct ? `${runtimeSettings.minUsageRemainingPct}% remaining` : "off"}`);
+      console.log("  Fable reviews: blocked");
       console.log(`  approve password: ${APPROVE_PASSWORD ? "set" : "not set — every approval comes back unauthorized"}`);
+      console.log(`  settings password: ${SETTINGS_PASSWORD ? "set" : "not set — settings are read-only"}`);
     }
   });
   return server;

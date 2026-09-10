@@ -134,6 +134,20 @@ body::after {
 .brandrow { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
 .logo { display: flex; align-items: center; }
 .brand-svg { display: block; filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.6)); }
+.profile-toggle {
+  position: relative; flex: 0 0 auto; width: 48px; height: 48px; padding: 0;
+  border: 2px solid rgba(255, 180, 87, 0.52); border-radius: 15px; overflow: hidden;
+  background: var(--panel-3); color: var(--text); cursor: pointer;
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.36);
+}
+.profile-toggle:hover { border-color: var(--accent); transform: translateY(-1px); }
+.profile-toggle img, .profile-fallback { position: absolute; inset: 0; width: 100%; height: 100%; }
+.profile-toggle img { display: block; object-fit: cover; }
+.profile-fallback { display: none; align-items: center; justify-content: center; background: linear-gradient(145deg, #455168, #1e2532); font-weight: 800; font-size: 20px; }
+.profile-toggle.image-failed img { display: none; }
+.profile-toggle.image-failed .profile-fallback { display: flex; }
+.profile-state { position: absolute; right: 3px; bottom: 3px; width: 10px; height: 10px; border: 2px solid #171a21; border-radius: 50%; background: var(--green); }
+.profile-toggle.locked .profile-state { background: var(--red); }
 .brand-name {
   font-weight: 800;
   font-size: 22px;
@@ -479,6 +493,41 @@ body::after {
 }
 .modal-card.shake { animation: shake 0.35s; }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
+
+/* --------------------------------------------------- instance settings --- */
+.settings-card { width: min(94vw, 720px); max-height: 90vh; overflow-y: auto; }
+.settings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.settings-head .modal-sub { margin-bottom: 8px; }
+.settings-x { border: 0; background: transparent; color: var(--faint); font-size: 25px; line-height: 1; padding: 0 4px; cursor: pointer; }
+.settings-x:hover { color: var(--text); }
+.settings-section { padding: 15px 0; border-top: 1px solid var(--border); }
+.settings-section-title { margin-bottom: 10px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; }
+.avatar-editor { display: flex; align-items: center; gap: 15px; margin-bottom: 13px; }
+.avatar-preview-wrap { position: relative; flex: 0 0 auto; width: 76px; height: 76px; overflow: hidden; border: 2px solid var(--accent); border-radius: 21px; background: var(--panel-3); }
+.avatar-preview, .avatar-preview-fallback { position: absolute; inset: 0; width: 100%; height: 100%; }
+.avatar-preview { object-fit: cover; }
+.avatar-preview-fallback { display: none; align-items: center; justify-content: center; font-size: 28px; font-weight: 800; background: linear-gradient(145deg, #455168, #1e2532); }
+.avatar-preview-wrap.image-failed .avatar-preview { display: none; }
+.avatar-preview-wrap.image-failed .avatar-preview-fallback { display: flex; }
+.settings-help { max-width: 48ch; margin-top: 6px; color: var(--faint); font-size: 11.5px; }
+.avatar-grid { display: grid; grid-template-columns: repeat(10, minmax(42px, 1fr)); gap: 7px; }
+.avatar-choice { aspect-ratio: 1; min-width: 0; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 12px; background: var(--panel-3); cursor: pointer; }
+.avatar-choice img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.avatar-choice:hover { border-color: var(--faint); }
+.avatar-choice.selected { border-color: var(--accent); box-shadow: var(--ring); }
+.avatar-attribution { display: inline-block; margin-top: 9px; color: var(--faint); font-size: 10.5px; }
+.avatar-attribution:hover { color: var(--muted); }
+.settings-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 58px; padding: 8px 10px; border-radius: 10px; background: rgba(8, 9, 13, 0.28); }
+.setting-row > span { display: flex; flex-direction: column; }
+.setting-row b { color: var(--text); font-size: 13px; }
+.setting-row small { color: var(--faint); font-size: 11px; line-height: 1.4; }
+.setting-row input[type="checkbox"] { width: 19px; height: 19px; accent-color: var(--accent); flex: 0 0 auto; }
+.setting-row select, .setting-row input[type="number"] { min-width: 112px; padding: 7px 9px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--panel); color: var(--text); }
+.number-suffix { position: relative; flex: 0 0 auto; }
+.number-suffix input { width: 112px; padding-right: 43px !important; }
+.number-suffix i { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 10px; font-style: normal; pointer-events: none; }
+.settings-password-label { display: block; margin: 2px 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 
 /* --------------------------------------------------- welcome-back banner -- */
 .welcome-banner {
@@ -869,6 +918,10 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
   .composer { flex-wrap: wrap; }
   .hero-stage .composer { flex-wrap: nowrap; }
   .brand-host { display: none; }   /* the machine name is the first thing to go */
+  .profile-toggle { width: 42px; height: 42px; border-radius: 13px; }
+  .avatar-grid { grid-template-columns: repeat(5, minmax(44px, 1fr)); }
+  .settings-controls { grid-template-columns: 1fr; }
+  .setting-row { min-height: 54px; }
   /* The model keeps its name; the variant in brackets is the first detail to go. */
   .model-note { display: none; }
 
@@ -914,6 +967,15 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 
 @media (prefers-reduced-motion: reduce) {
   .rail { transition: none; }
+}
+
+@media (max-width: 600px) {
+  .logo, .queue-status, .notify-label { display: none; }
+  .brand-name { font-size: 19px; }
+  .topbar-right { gap: 5px; }
+  .notify-toggle { padding: 7px; }
+  .settings-card { padding: 17px; }
+  .avatar-editor { align-items: flex-start; }
 }
 
 /* ---- the CLI setup card ------------------------------------------------- */

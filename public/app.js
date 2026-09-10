@@ -11,6 +11,25 @@ const providerSelect = $("provider-select");
 const hostNameEl = $("host-name");
 const cliToggle = $("cli-toggle");
 const cliBackdrop = $("cli-backdrop");
+const profileToggle = $("profile-toggle");
+const profileAvatar = $("profile-avatar");
+const profileFallback = $("profile-fallback");
+const settingsBackdrop = $("settings-backdrop");
+const settingsForm = $("settings-form");
+const settingsClose = $("settings-close");
+const settingsCancel = $("settings-cancel");
+const settingsSave = $("settings-save");
+const settingsPassword = $("settings-password");
+const settingsError = $("settings-error");
+const settingsAvatarPreview = $("settings-avatar-preview");
+const settingsAvatarFallback = $("settings-avatar-fallback");
+const avatarGrid = $("avatar-grid");
+const avatarUpload = $("avatar-upload");
+const avatarUploadButton = $("avatar-upload-button");
+const avatarAttribution = $("avatar-attribution");
+const settingAccepting = $("setting-accepting");
+const settingConcurrency = $("setting-concurrency");
+const settingUsageFloor = $("setting-usage-floor");
 const notifyToggle = $("notify-toggle");
 const queueStatusEl = $("queue-status");
 const welcomeBanner = $("welcome-banner");
@@ -81,6 +100,8 @@ let hostName = "";
 let isHost = false;
 let hostLogin = null;
 let defaultProvider = "claude";
+let instanceSettings = null;
+let instanceProfile = null;
 let welcomeShown = false;
 // The id the approve dialogs are about. That is the entire amount of state the
 // approve flow keeps, and it lives only between clicking the button and the
@@ -220,7 +241,12 @@ function updateSubmitButton() {
     submitBtn.title = "Start a review of this PR";
     delete submitBtn.dataset.verifyId;
   }
-  submitBtn.disabled = false;
+  const locked = instanceSettings && !instanceSettings.acceptingReviews;
+  submitBtn.disabled = !!locked;
+  if (locked) {
+    submitBtn.textContent = "Reviews locked";
+    submitBtn.title = "This instance is not accepting new or resumed reviews. The host can unlock it in settings.";
+  }
 }
 
 // -------------------------------------------------------------- review model
@@ -1271,6 +1297,190 @@ document.addEventListener("keydown", (e) => {
   if (blockedBackdrop && !blockedBackdrop.hidden) { closeBlocked(); return; }
   if (pwBackdrop && !pwBackdrop.hidden) { closePassword(); return; }
   if (confirmBackdrop && !confirmBackdrop.hidden) { closeConfirm(); return; }
+  if (settingsBackdrop && !settingsBackdrop.hidden) { closeSettings(); return; }
+});
+
+// ------------------------------------------------------- instance settings -
+// PRSnooze has one host identity rather than user accounts. The picture makes
+// that identity recognizable across a team's instances; the same dialog owns
+// the server-enforced intake controls for that host.
+let pendingAvatarDataUrl = null;
+let selectedAvatarId = null;
+
+function profileInitial() {
+  return (hostName || "P").trim().charAt(0).toUpperCase() || "P";
+}
+
+function setImageWithFallback(img, container, url) {
+  if (!img || !container) return;
+  container.classList.remove("image-failed");
+  img.onload = () => container.classList.remove("image-failed");
+  img.onerror = () => container.classList.add("image-failed");
+  img.src = url || "";
+}
+
+function applyPublicSettings(data) {
+  if (data?.admission) instanceSettings = data.admission;
+  if (data?.profile) instanceProfile = data.profile;
+  if (!instanceSettings || !instanceProfile) return;
+
+  const initial = profileInitial();
+  if (profileFallback) profileFallback.textContent = initial;
+  if (settingsAvatarFallback) settingsAvatarFallback.textContent = initial;
+  setImageWithFallback(profileAvatar, profileToggle, instanceProfile.avatarUrl);
+  profileToggle?.classList.toggle("locked", !instanceSettings.acceptingReviews);
+  if (profileToggle) {
+    profileToggle.title = instanceSettings.acceptingReviews
+      ? `Open ${hostName || "instance"} settings`
+      : "Reviews are locked — open settings";
+  }
+  updateSubmitButton();
+}
+
+function renderAvatarChoices() {
+  if (!avatarGrid || !instanceProfile) return;
+  avatarGrid.replaceChildren(...(instanceProfile.choices || []).map((choice) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `avatar-choice${choice.id === selectedAvatarId && !pendingAvatarDataUrl ? " selected" : ""}`;
+    button.title = choice.label;
+    button.setAttribute("aria-label", `Use ${choice.label} avatar`);
+    const image = document.createElement("img");
+    image.src = choice.url;
+    image.alt = "";
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    button.appendChild(image);
+    button.addEventListener("click", () => {
+      selectedAvatarId = choice.id;
+      pendingAvatarDataUrl = null;
+      setImageWithFallback(settingsAvatarPreview, settingsAvatarPreview?.parentElement, choice.url);
+      renderAvatarChoices();
+    });
+    return button;
+  }));
+}
+
+function openSettings() {
+  if (!settingsBackdrop || !instanceSettings || !instanceProfile) return;
+  pendingAvatarDataUrl = null;
+  selectedAvatarId = instanceProfile.avatarId;
+  settingAccepting.checked = !!instanceSettings.acceptingReviews;
+  settingConcurrency.value = String(instanceSettings.maxConcurrentReviews || 1);
+  settingUsageFloor.value = String(instanceSettings.minUsageRemainingPct || 0);
+  settingsPassword.value = "";
+  settingsError.hidden = true;
+  setImageWithFallback(settingsAvatarPreview, settingsAvatarPreview?.parentElement, instanceProfile.avatarUrl);
+  renderAvatarChoices();
+  if (avatarAttribution) {
+    avatarAttribution.textContent = instanceProfile.attribution?.label || "";
+    avatarAttribution.href = instanceProfile.attribution?.url || "#";
+  }
+  settingsBackdrop.hidden = false;
+  settingsPassword.focus();
+}
+
+function closeSettings() {
+  if (!settingsBackdrop) return;
+  settingsBackdrop.hidden = true;
+  settingsPassword.value = "";
+  pendingAvatarDataUrl = null;
+}
+
+function settingsFail(message) {
+  settingsError.textContent = message;
+  settingsError.hidden = false;
+  settingsForm.classList.remove("shake");
+  void settingsForm.offsetWidth;
+  settingsForm.classList.add("shake");
+}
+
+async function resizeAvatar(file) {
+  if (!file || !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    throw new Error("Choose a PNG, JPEG, or WebP image.");
+  }
+  if (file.size > 12 * 1024 * 1024) throw new Error("Choose an image smaller than 12 MB.");
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("That image could not be read."));
+      image.src = url;
+    });
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    if (!side) throw new Error("That image has no usable pixels.");
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const context = canvas.getContext("2d");
+    context.drawImage(
+      image,
+      Math.floor((image.naturalWidth - side) / 2),
+      Math.floor((image.naturalHeight - side) / 2),
+      side,
+      side,
+      0,
+      0,
+      256,
+      256,
+    );
+    return canvas.toDataURL("image/webp", 0.86);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+profileToggle?.addEventListener("click", openSettings);
+settingsClose?.addEventListener("click", closeSettings);
+settingsCancel?.addEventListener("click", closeSettings);
+settingsBackdrop?.addEventListener("click", (event) => { if (event.target === settingsBackdrop) closeSettings(); });
+avatarUploadButton?.addEventListener("click", () => avatarUpload?.click());
+avatarUpload?.addEventListener("change", async () => {
+  try {
+    pendingAvatarDataUrl = await resizeAvatar(avatarUpload.files?.[0]);
+    selectedAvatarId = null;
+    setImageWithFallback(settingsAvatarPreview, settingsAvatarPreview?.parentElement, pendingAvatarDataUrl);
+    renderAvatarChoices();
+    settingsError.hidden = true;
+  } catch (error) {
+    settingsFail(error.message);
+  } finally {
+    avatarUpload.value = "";
+  }
+});
+
+settingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!settingsPassword.value) return settingsFail("Enter the settings password.");
+  settingsSave.disabled = true;
+  settingsSave.textContent = "Saving…";
+  settingsError.hidden = true;
+  try {
+    const response = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        password: settingsPassword.value,
+        acceptingReviews: settingAccepting.checked,
+        maxConcurrentReviews: Number(settingConcurrency.value),
+        minUsageRemainingPct: Number(settingUsageFloor.value),
+        avatarId: selectedAvatarId,
+        avatarDataUrl: pendingAvatarDataUrl,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    applyPublicSettings(data);
+    closeSettings();
+    showToast("Instance settings saved.");
+  } catch (error) {
+    settingsFail(error.message);
+  } finally {
+    settingsSave.disabled = false;
+    settingsSave.textContent = "Save settings";
+  }
 });
 
 // ----------------------------------------------------------- active model ---
@@ -1830,6 +2040,7 @@ function connectLive() {
   ws.onmessage = (m) => {
     let data; try { data = JSON.parse(m.data); } catch { return; }
     if (data.type === "snapshot") applySnapshot(data);
+    if (data.type === "settings") applyPublicSettings(data);
     liveBackoff = 1000; // healthy traffic resets the backoff
   };
   ws.onclose = () => { liveWs = null; scheduleLiveReconnect(); };
@@ -1921,6 +2132,7 @@ async function loadConfig() {
     hostLogin = cfg.hostLogin || null;
     defaultProvider = cfg.defaultProvider || "claude";
     cliConfig = cfg;
+    applyPublicSettings(cfg);
     renderCliCard();
     const providerOptions = Array.isArray(cfg.providers) ? cfg.providers : [];
     if (providerSelect) {
@@ -1939,6 +2151,7 @@ async function loadConfig() {
       hostName = cfg.host;
       hostNameEl.textContent = `on ${hostName}'s machine`;
       if (heroHost) heroHost.textContent = cfg.hostLogin ? ` as @${cfg.hostLogin}` : ` as ${hostName}`;
+      applyPublicSettings(cfg);
     }
     // The usage chip names the host and has a host-only fallback state, so it
     // can only render properly once the config has landed.

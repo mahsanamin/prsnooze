@@ -26,6 +26,11 @@
             <ellipse cx="42" cy="34" rx="9" ry="11" fill="#eaeefb" /><circle cx="42" cy="36" r="4.6" fill="#0d1020" />
           </svg>
         </span>
+        <button id="profile-toggle" class="profile-toggle" type="button" aria-haspopup="dialog" aria-controls="settings-form" aria-label="Open instance settings" title="Open instance settings">
+          <img id="profile-avatar" alt="" />
+          <span id="profile-fallback" class="profile-fallback" aria-hidden="true">P</span>
+          <span id="profile-state" class="profile-state" aria-hidden="true"></span>
+        </button>
         <span class="brand-name">prsnooze</span>
         <span class="brand-host" id="host-name"></span>
       </div>
@@ -167,6 +172,65 @@
     </div>
 
     <div id="toast" class="toast" hidden></div>
+
+    <div id="settings-backdrop" class="modal-backdrop" hidden>
+      <form id="settings-form" class="modal-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="settings-head">
+          <div>
+            <div id="settings-title" class="modal-title">Instance profile &amp; review settings</div>
+            <div class="modal-sub">This picture identifies whose machine and plan will run the review. Changes require the settings password.</div>
+          </div>
+          <button id="settings-close" class="settings-x" type="button" aria-label="Close settings">×</button>
+        </div>
+
+        <section class="settings-section">
+          <div class="settings-section-title">Picture</div>
+          <div class="avatar-editor">
+            <div class="avatar-preview-wrap">
+              <img id="settings-avatar-preview" class="avatar-preview" alt="Selected profile picture" />
+              <span id="settings-avatar-fallback" class="avatar-preview-fallback" aria-hidden="true">P</span>
+            </div>
+            <div>
+              <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+              <button id="avatar-upload-button" class="modal-cancel" type="button">Upload your picture</button>
+              <div class="settings-help">PNG, JPEG, or WebP. It is resized in your browser and stored only on this PRSnooze host.</div>
+            </div>
+          </div>
+          <div id="avatar-grid" class="avatar-grid" aria-label="Default profile pictures"></div>
+          <a id="avatar-attribution" class="avatar-attribution" target="_blank" rel="noopener noreferrer"></a>
+        </section>
+
+        <section class="settings-section settings-controls">
+          <label class="setting-row">
+            <span><b>Accept new reviews</b><small>Turn this off to lock intake. Running and queued reviews continue.</small></span>
+            <input id="setting-accepting" type="checkbox" />
+          </label>
+          <label class="setting-row setting-select-row">
+            <span><b>Reviews at once</b><small>Lowering this does not stop work already running.</small></span>
+            <select id="setting-concurrency">
+              <option value="1">1 review</option>
+              <option value="2">2 reviews</option>
+              <option value="3">3 reviews</option>
+              <option value="4">4 reviews</option>
+            </select>
+          </label>
+          <label class="setting-row setting-select-row">
+            <span><b>Minimum plan remaining</b><small>Claude reviews pause below this floor. Providers without plan telemetry are unaffected.</small></span>
+            <span class="number-suffix"><input id="setting-usage-floor" type="number" min="0" max="100" step="1" inputmode="numeric" /><i>% left</i></span>
+          </label>
+        </section>
+
+        <label class="settings-password-label" for="settings-password">Settings password</label>
+        <div class="modal-field">
+          <input id="settings-password" type="password" placeholder="Settings password" autocomplete="current-password" />
+        </div>
+        <div id="settings-error" class="modal-err" hidden></div>
+        <div class="modal-actions">
+          <button id="settings-cancel" type="button" class="modal-cancel">Cancel</button>
+          <button id="settings-save" type="submit" class="confirm-ok">Save settings</button>
+        </div>
+      </form>
+    </div>
 
     <!-- Every command here is filled in from /api/config and the URL this page
          was opened on, so a colleague copies a line that already points at THIS
