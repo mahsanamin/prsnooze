@@ -545,7 +545,7 @@ function selectReview(id) {
   emptyState.hidden = true;
   input.value = rev.prUrl || "";
   const previousProvider = selectedProvider();
-  if (providerSelect && Array.from(providerSelect.options).some((option) => option.value === rev.provider)) {
+  if (providerSelect && Array.from(providerSelect.options).some((option) => option.value === rev.provider && !option.disabled)) {
     providerSelect.value = rev.provider;
   }
   if (selectedProvider() !== previousProvider) {
@@ -1355,9 +1355,25 @@ function applyPublicSettings(data) {
   if (data?.admission) instanceSettings = data.admission;
   if (data?.profile) instanceProfile = data.profile;
   if (!instanceSettings || !instanceProfile) return;
+  const previousProvider = selectedProvider();
   for (const option of providerSelect?.options || []) {
     option.disabled = (instanceSettings.disabledProviders || []).includes(option.value);
+    option.hidden = option.disabled;
     option.textContent = option.textContent.replace(/ \(disabled\)$/, "") + (option.disabled ? " (disabled)" : "");
+  }
+  const enabled = Array.from(providerSelect?.options || []).filter((option) => !option.disabled);
+  if (providerSelect && !enabled.some((option) => option.value === providerSelect.value)) {
+    providerSelect.value = enabled[0]?.value || "";
+  }
+  // A single available provider needs no picker; keep its value for submissions.
+  if (providerPick) providerPick.hidden = enabled.length < 2;
+  if (previousProvider !== selectedProvider()) {
+    usageData = null;
+    modelData = null;
+    renderUsage();
+    renderModel();
+    refreshUsage();
+    refreshModel();
   }
 
   const initial = profileInitial();

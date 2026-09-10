@@ -89,10 +89,13 @@ async function main() {
     assert.equal(await page.locator("#submit-btn").isDisabled(), true);
     await page.locator("#profile-toggle").click();
     await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
-    for (const provider of ["claude", "codex"]) await page.locator(`input[data-provider="${provider}"]`).check();
+    await page.locator('input[data-provider="codex"]').check();
     await page.locator("#settings-save").click();
     await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
     await page.waitForFunction(() => !document.querySelector("#submit-btn").disabled);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("#provider-select").value === "codex");
+    assert.equal(await page.locator("#provider-pick").isVisible(), false);
     const cover = await page.evaluate(() => {
       const style = getComputedStyle(document.body, "::after");
       return { opacity: Number(style.opacity), mask: style.maskImage, image: style.backgroundImage };
@@ -145,6 +148,9 @@ async function main() {
       selectReview("ui-fixture");
     });
     assert.equal(await page.evaluate(() => document.body.classList.contains("hero-mode")), false);
+    assert.equal(await page.locator("#provider-select").inputValue(), "codex");
+    assert.equal(await page.locator("#provider-pick").isVisible(), false);
+    assert.equal(await page.locator(".topbar #composer").count(), 1);
     await page.screenshot({ path: path.join(home, "review.png") });
     assert.deepEqual(errors, []);
     console.log(`Settings UI passed: desktop/mobile, offline avatars, custom upload/reload in hidden data home, old server, failed config/retry. Screenshots: ${home}`);
