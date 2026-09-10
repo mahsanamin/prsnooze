@@ -52,11 +52,23 @@ async function save(body, password = "settings-secret") {
 }
 
 test("the settings password is separate, required, and never exposed", async () => {
-  const config = await (await fetch(`${base}/api/config`)).json();
+  const response = await fetch(`${base}/api/config`);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const config = await response.json();
   assert.equal(JSON.stringify(config).includes("settings-secret"), false);
   assert.equal(config.profile.choices.length, 20);
   const denied = await save({ acceptingReviews: false }, "wrong");
   assert.equal(denied.status, 401);
+});
+
+test("every default avatar is served locally as SVG", async () => {
+  const config = await (await fetch(`${base}/api/config`)).json();
+  for (const avatar of config.profile.choices) {
+    const response = await fetch(`${base}${avatar.url}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /image\/svg\+xml/);
+    assert.match(await response.text(), /<svg /);
+  }
 });
 
 test("locking intake persists and refuses both browser and shared submit paths", async () => {

@@ -1313,7 +1313,7 @@ function profileInitial() {
 
 function setImageWithFallback(img, container, url) {
   if (!img || !container) return;
-  container.classList.remove("image-failed");
+  container.classList.add("image-failed");
   img.onload = () => container.classList.remove("image-failed");
   img.onerror = () => container.classList.add("image-failed");
   img.src = url || "";
@@ -1361,8 +1361,29 @@ function renderAvatarChoices() {
   }));
 }
 
-function openSettings() {
-  if (!settingsBackdrop || !instanceSettings || !instanceProfile) return;
+async function openSettings() {
+  if (!settingsBackdrop) return;
+  settingsBackdrop.hidden = false;
+  settingsPassword.value = "";
+  settingsError.textContent = "Loading settings…";
+  settingsError.hidden = false;
+  const controls = [settingAccepting, settingConcurrency, settingUsageFloor,
+    avatarUploadButton, settingsPassword, settingsSave];
+  controls.forEach((control) => { control.disabled = true; });
+  avatarGrid.replaceChildren();
+  settingsClose.focus();
+  try {
+    const cfg = await fetchPublicConfig();
+    if (!cfg.admission || !cfg.profile) {
+      throw new Error("This server is still running an older version. On the host, run bin/prsnooze-service restart (or rebuild/restart your Docker deployment), then reopen settings. Pulling code and running start does not restart an already-running server.");
+    }
+    applyPublicSettings(cfg);
+  } catch (error) {
+    settingsFail(error.message);
+    return;
+  }
+  if (settingsBackdrop.hidden) return;
+  controls.forEach((control) => { control.disabled = false; });
   pendingAvatarDataUrl = null;
   selectedAvatarId = instanceProfile.avatarId;
   settingAccepting.checked = !!instanceSettings.acceptingReviews;
@@ -1377,7 +1398,8 @@ function openSettings() {
     avatarAttribution.href = instanceProfile.attribution?.url || "#";
   }
   settingsBackdrop.hidden = false;
-  settingsPassword.focus();
+  settingsClose.focus();
+  settingsForm.scrollTop = 0;
 }
 
 function closeSettings() {
@@ -2122,11 +2144,23 @@ function relTime(ts) {
 }
 function escapeHtml(s) { return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"); }
 
+async function fetchPublicConfig() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch("/api/config", { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } catch {
+    throw new Error("Could not load settings from the server. Check the connection, then close and reopen settings to retry.");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function loadConfig() {
   try {
-    const r = await fetch("/api/config");
-    if (!r.ok) return;
-    const cfg = await r.json();
+    const cfg = await fetchPublicConfig();
     if (cfg.heroImage) document.body.style.setProperty("--hero", `url("${cfg.heroImage}")`);
     isHost = !!cfg.isHost;
     hostLogin = cfg.hostLogin || null;

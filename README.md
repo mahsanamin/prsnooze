@@ -95,7 +95,7 @@ your network is wrong.
 **Startup tells you.** Look at the log right after installing:
 
 ```
-Claude is logged in... ok    ahsan.amin@wego.com, team plan     <- good
+Claude is logged in... ok    reviewer@example.com, team plan   <- good
 Claude is logged in... fail  claude reports authMethod "none"   <- reviews will fail
 ```
 
@@ -218,7 +218,7 @@ prsnooze looks for a review playbook in provider-specific project and user locat
 2. Codex: `<repo>/.agents/skills/review-pr/SKILL.md` or `.codex/skills/review-pr/SKILL.md`, then matching user-level paths. Claude locations remain compatibility fallbacks.
 3. `skills/default-review/SKILL.md`, bundled here so there is always a floor.
 
-(`aa-review-pr` works as an alternate name at both levels.) The page shows which one ran, tagged `[project]` / `[user]` / `[bundled]`. To make reviews match how your team actually reviews, drop a `review-pr/SKILL.md` into your repo — nothing else to configure.
+The legacy review-skill alias works at both levels too. The page shows which one ran, tagged `[project]` / `[user]` / `[bundled]`. To make reviews match how your team actually reviews, drop a `review-pr/SKILL.md` into your repo — nothing else to configure.
 
 A project skill is read from the PR's **base** branch, not from the PR. A pull request that rewrites the review playbook is reviewed by the old one.
 
@@ -390,7 +390,17 @@ These controls require `PRSNOOZE_SETTINGS_PASSWORD`, which is deliberately
 separate from `MANUAL_APPROVE_PASSWORD`. Saving a setting never grants permission
 to approve a PR, and the settings password is not stored in the browser.
 
-Default profile art uses [Personas by Draftbit via DiceBear](https://www.dicebear.com/styles/personas/), licensed under CC BY 4.0.
+Default profile art uses [Personas by Draftbit via DiceBear](https://www.dicebear.com/styles/personas/), licensed under CC BY 4.0. All 20 images are bundled locally; loading the gallery needs no external image service.
+
+After pulling updates, restart the existing server with
+`bin/prsnooze-service restart` (or rebuild/restart your Docker deployment).
+`npm start` intentionally leaves an already-running server alone. If the page
+is newer than that server, the picture menu explains this instead of silently
+ignoring the click.
+
+The browser regression check is `node scripts/verify-settings-ui.js`, with
+Playwright available in `NODE_PATH` and, optionally, `CHROMIUM_PATH` pointing
+to a system Chromium. It runs a disposable server and never submits a review.
 
 ## Approving by hand
 

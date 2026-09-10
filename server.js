@@ -311,6 +311,7 @@ function isLoopback(req) {
 }
 
 app.get("/api/config", (req, res) => {
+  res.set("Cache-Control", "no-store");
   res.json({
     heroImage: HERO_IMAGE,
     brand: "prsnooze",

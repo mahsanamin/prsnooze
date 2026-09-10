@@ -18,13 +18,17 @@ const {
   stableAvatarId,
 } = require("../lib/instance-settings");
 
-test("the default gallery has 20 distinct, attributed internet avatars", () => {
+test("the default gallery bundles 20 distinct, attributed avatars without network dependencies", () => {
   assert.equal(AVATARS.length, 20);
   assert.equal(new Set(AVATARS.map((avatar) => avatar.id)).size, 20);
   assert.equal(new Set(AVATARS.map((avatar) => avatar.url)).size, 20);
   for (const avatar of AVATARS) {
-    assert.match(avatar.url, /^https:\/\/api\.dicebear\.com\/9\.x\/personas\/svg\?/);
-    assert.match(avatar.url, /backgroundColor=/);
+    assert.match(avatar.url, /^\/avatars\/[a-z]+\.svg$/);
+    const svg = fs.readFileSync(path.join(__dirname, "../public", avatar.url), "utf8");
+    assert.match(svg, /<svg /);
+    assert.match(svg, /Personas by Draftbit/);
+    assert.match(svg, /creativecommons.org\/licenses\/by\/4.0/);
+    assert.doesNotMatch(svg, /<script|<foreignObject|(?:href|src)=["']https?:/i);
   }
   assert.equal(stableAvatarId("same-instance"), stableAvatarId("same-instance"));
 });

@@ -79,19 +79,16 @@ body::before {
     linear-gradient(178deg, #0c0e13 0%, #0a0b0f 58%, #07080a 100%);
   background-size: 240px 220px, 240px 220px, 240px 220px, 240px 220px, 240px 220px, auto, auto, auto, auto;
 }
-/* Optional cover image (HERO_IMAGE), faded into the bottom of the sky so it
-   sets a mood without competing with text. */
+/* Keep the cover visible across the screen. Text has its own panel surfaces;
+   a radial transparency mask here used to erase most of the user's image. */
 body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   background: var(--hero, none) center / cover no-repeat;
-  opacity: 0.62;
-  /* Fades out toward the top-left, where the rail and the panel text live, so a
-     cover image sets a mood in the corner instead of sitting behind copy. */
-  -webkit-mask-image: radial-gradient(105% 100% at 90% 102%, #000 18%, rgba(0, 0, 0, 0.5) 48%, transparent 80%);
-  mask-image: radial-gradient(105% 100% at 90% 102%, #000 18%, rgba(0, 0, 0, 0.5) 48%, transparent 80%);
+  opacity: 0.85;
+  pointer-events: none;
 }
 
 .wrap {
@@ -567,6 +564,8 @@ body::after {
   z-index: 1;
 }
 main.app { flex: 1; min-height: 0; display: flex; position: relative; }
+.hero-mode .appcard { background: rgba(18, 20, 26, 0.2); }
+.hero-mode .hero-stage { text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9); }
 
 /* The rail toggle and its backdrop only exist below the breakpoint — see the
    narrow block at the bottom of this file. */
