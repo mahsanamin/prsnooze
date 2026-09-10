@@ -86,7 +86,7 @@ body::after {
   position: fixed;
   inset: 0;
   z-index: 0;
-  background: var(--hero, none) center / cover no-repeat;
+  background: linear-gradient(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.14)), var(--hero, none) center / cover no-repeat;
   opacity: 0.85;
   pointer-events: none;
 }
