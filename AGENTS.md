@@ -146,6 +146,9 @@ control a security surface, not a convenience feature.
 - Browser and remote submissions, including resume, must pass one shared
   server-side admission policy. A disabled browser button is only presentation.
 - Locking intake or lowering concurrency never cancels queued or running work.
+  Per-provider disable switches also refuse only new submissions and resumes,
+  through the same admission policy, without cancelling existing work. Missing
+  provider-switch settings mean all configured providers remain enabled.
   A runtime concurrency increase should drain the existing queue immediately.
 - Fable protection checks the active Claude model immediately before admission
   and fails closed when it cannot confirm the model. Never infer a model from

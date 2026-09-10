@@ -30,7 +30,8 @@ exit 0
 `, { mode: 0o755 });
 
 process.env.PRSNOOZE_HOME = home;
-process.env.REVIEW_PROVIDERS = "claude";
+process.env.REVIEW_PROVIDERS = "claude,codex";
+process.env.CODEX_BIN = "/bin/true";
 process.env.CLAUDE_BIN = fakeClaude;
 process.env.PRSNOOZE_SETTINGS_PASSWORD = "settings-secret";
 const { start, jobs } = require("../server");
@@ -108,6 +109,39 @@ test("settings login grants a settings-only session and logout revokes it", asyn
   assert.equal(logout.status, 204);
   const denied = await fetch(`${base}/api/settings`, { method: "POST", headers, body: "{}" });
   assert.equal(denied.status, 401);
+});
+
+test("provider toggles reject new and resumed reviews on browser and remote paths", async () => {
+  for (const disabledProviders of [["claude"], ["codex"], ["claude", "codex"]]) {
+    assert.equal((await save({ disabledProviders })).status, 200);
+    const config = await (await fetch(`${base}/api/config`)).json();
+    assert.deepEqual(config.admission.disabledProviders, disabledProviders);
+    for (const provider of disabledProviders) {
+      for (const route of ["/api/review", "/api/remote/review"]) {
+        const response = await fetch(`${base}${route}`, { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prUrl: "https://github.com/example/repo/pull/1", provider }) });
+        assert.equal(response.status, 423);
+        assert.equal((await response.json()).code, "PROVIDER_DISABLED");
+      }
+      jobs.set("disabled-resume", { id: "disabled-resume", provider, sessionId: "session",
+        prUrl: "https://github.com/example/repo/pull/1", state: "done", events: [] });
+      const response = await fetch(`${base}/api/jobs/disabled-resume/verify`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      assert.equal(response.status, 423);
+      assert.equal((await response.json()).code, "PROVIDER_DISABLED");
+      const remoteResume = await fetch(`${base}/api/remote/jobs/disabled-resume/resume`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      assert.equal(remoteResume.status, 423);
+      assert.equal((await remoteResume.json()).code, "PROVIDER_DISABLED");
+      assert.equal(jobs.get("disabled-resume").state, "done");
+      jobs.delete("disabled-resume");
+    }
+  }
+  assert.equal((await save({ disabledProviders: ["unknown"] })).status, 400);
+  assert.equal((await save({ disabledProviders: false })).status, 400);
+  assert.equal((await save({ disabledProviders: [] })).status, 200);
+  assert.deepEqual((await (await fetch(`${base}/api/config`)).json()).admission.disabledProviders, []);
 });
 
 test("locking intake persists and refuses both browser and shared submit paths", async () => {

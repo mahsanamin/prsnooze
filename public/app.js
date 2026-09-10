@@ -242,10 +242,14 @@ function updateSubmitButton() {
     delete submitBtn.dataset.verifyId;
   }
   const locked = instanceSettings && !instanceSettings.acceptingReviews;
-  submitBtn.disabled = !!locked;
+  const providerDisabled = (instanceSettings?.disabledProviders || []).includes(rev ? rev.provider || "claude" : selectedProvider());
+  submitBtn.disabled = !!locked || providerDisabled;
   if (locked) {
     submitBtn.textContent = "Reviews locked";
     submitBtn.title = "This instance is not accepting new or resumed reviews. The host can unlock it in settings.";
+  } else if (providerDisabled) {
+    submitBtn.textContent = "Provider disabled";
+    submitBtn.title = "This provider is disabled. Choose another provider or enable it in settings.";
   }
 }
 
@@ -1351,6 +1355,10 @@ function applyPublicSettings(data) {
   if (data?.admission) instanceSettings = data.admission;
   if (data?.profile) instanceProfile = data.profile;
   if (!instanceSettings || !instanceProfile) return;
+  for (const option of providerSelect?.options || []) {
+    option.disabled = (instanceSettings.disabledProviders || []).includes(option.value);
+    option.textContent = option.textContent.replace(/ \(disabled\)$/, "") + (option.disabled ? " (disabled)" : "");
+  }
 
   const initial = profileInitial();
   if (profileFallback) profileFallback.textContent = initial;
@@ -1400,6 +1408,7 @@ async function openSettings() {
     avatarUploadButton, settingsPassword, settingsSave];
   controls.forEach((control) => { control.disabled = true; });
   avatarGrid.replaceChildren();
+  $("settings-providers").replaceChildren();
   settingsClose.focus();
   try {
     const cfg = await fetchPublicConfig();
@@ -1407,6 +1416,18 @@ async function openSettings() {
       throw new Error("This server is still running an older version. On the host, run bin/prsnooze-service restart (or rebuild/restart your Docker deployment), then reopen settings. Pulling code and running start does not restart an already-running server.");
     }
     applyPublicSettings(cfg);
+    $("settings-providers").replaceChildren(...(cfg.providers || []).map((provider) => {
+      const label = document.createElement("label");
+      label.className = "setting-row";
+      const name = document.createElement("b");
+      name.textContent = provider.label;
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.provider = provider.id;
+      checkbox.checked = !(instanceSettings.disabledProviders || []).includes(provider.id);
+      label.append(name, checkbox);
+      return label;
+    }));
   } catch (error) {
     settingsFail(error.message);
     return;
@@ -1528,6 +1549,8 @@ settingsForm?.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${settingsSession.token}` },
       body: JSON.stringify({
         acceptingReviews: settingAccepting.checked,
+        disabledProviders: [...$("settings-providers").querySelectorAll("input[data-provider]")]
+          .filter((checkbox) => !checkbox.checked).map((checkbox) => checkbox.dataset.provider),
         maxConcurrentReviews: Number(settingConcurrency.value),
         minUsageRemainingPct: Number(settingUsageFloor.value),
         avatarId: selectedAvatarId,
@@ -2228,6 +2251,7 @@ async function loadConfig() {
       }
       providerPick.hidden = providerOptions.length < 2;
     }
+    applyPublicSettings(cfg);
     if (cfg.host) {
       hostName = cfg.host;
       hostNameEl.textContent = `on ${hostName}'s machine`;

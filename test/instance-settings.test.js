@@ -37,6 +37,7 @@ test("settings are normalized, persisted privately, and loaded again", () => {
   const dataHome = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-settings-"));
   const settings = normalizeSettings({
     acceptingReviews: false,
+    disabledProviders: ["codex"],
     minUsageRemainingPct: 25,
     maxConcurrentReviews: 2,
     avatar: { kind: "preset", id: "coral" },
@@ -45,6 +46,8 @@ test("settings are normalized, persisted privately, and loaded again", () => {
   assert.deepEqual(loadSettings({ dataHome, instanceId: "instance" }), settings);
   assert.equal(fs.statSync(path.join(dataHome, "settings.json")).mode & 0o777, 0o600);
   assert.equal(publicSettings(settings).profile.avatarId, "coral");
+  assert.deepEqual(publicSettings(settings).admission.disabledProviders, ["codex"]);
+  assert.deepEqual(normalizeSettings({}).disabledProviders, []);
 });
 
 test("custom avatars accept bounded raster data and reject disguised content", () => {

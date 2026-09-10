@@ -12,7 +12,8 @@ const { chromium } = require("playwright");
 async function main() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-ui-"));
   process.env.PRSNOOZE_HOME = path.join(home, ".prsnooze");
-  process.env.REVIEW_PROVIDERS = "claude";
+  process.env.REVIEW_PROVIDERS = "claude,codex";
+  process.env.CODEX_BIN = "/bin/true";
   process.env.CLAUDE_BIN = "/bin/true";
   process.env.GH_BIN = "/bin/true";
   process.env.PRSNOOZE_SETTINGS_PASSWORD = "ui-test-only";
@@ -42,11 +43,16 @@ async function main() {
     await page.waitForFunction(() => [...document.querySelectorAll(".avatar-choice img")]
       .every((img) => img.complete && img.naturalWidth > 0));
     await page.locator('[aria-label="Use Coral avatar"]').click();
+    await page.locator('input[data-provider="codex"]').uncheck();
     await page.locator("#settings-password").fill("ui-test-only");
     await page.locator("#settings-save").click();
     await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
+    assert.deepEqual(settingRequests[0].disabledProviders, ["codex"]);
+    assert.deepEqual((await (await page.request.get(`${base}/api/config`)).json()).admission.disabledProviders, ["codex"]);
     await page.reload();
     await page.waitForFunction(() => document.querySelector("#profile-avatar").src.endsWith("/avatars/coral.svg"));
+    assert.equal(await page.locator('#provider-select option[value="codex"]').evaluate((option) => option.disabled), true);
+    assert.equal(await page.locator('#provider-select option[value="claude"]').evaluate((option) => option.disabled), false);
     // Real desktop-file upload: canvas resize/encode, save, HTTP delivery,
     // browser decode and persistence after reload, under the hidden data home.
     await page.locator("#profile-toggle").click();
@@ -73,6 +79,20 @@ async function main() {
       const img = document.querySelector("#profile-avatar");
       return img.src.includes("/api/profile/avatar?") && img.complete && img.naturalWidth === 256;
     });
+    await page.locator("#profile-toggle").click();
+    await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
+    await page.locator('input[data-provider="claude"]').uncheck();
+    await page.locator("#settings-save").click();
+    await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("#submit-btn").textContent === "Provider disabled");
+    assert.equal(await page.locator("#submit-btn").isDisabled(), true);
+    await page.locator("#profile-toggle").click();
+    await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
+    for (const provider of ["claude", "codex"]) await page.locator(`input[data-provider="${provider}"]`).check();
+    await page.locator("#settings-save").click();
+    await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
+    await page.waitForFunction(() => !document.querySelector("#submit-btn").disabled);
     const cover = await page.evaluate(() => {
       const style = getComputedStyle(document.body, "::after");
       return { opacity: Number(style.opacity), mask: style.maskImage, image: style.backgroundImage };
@@ -87,7 +107,7 @@ async function main() {
     assert.equal(await page.locator("#settings-backdrop").isVisible(), true);
     await page.screenshot({ path: path.join(home, "mobile.png") });
     assert.equal(await page.evaluate(() => JSON.stringify({ ...sessionStorage, ...localStorage }).includes("ui-test-only")), false);
-    assert.equal(settingRequests.length, 2);
+    assert.equal(settingRequests.length, 4);
     assert.ok(settingRequests.every((body) => !("password" in body)));
     await page.locator("#settings-lock").click();
     await page.waitForFunction(() => !document.querySelector("#settings-credentials").hidden);

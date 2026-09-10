@@ -379,6 +379,10 @@ a PNG, JPEG, or WebP. Uploaded pictures are resized in the browser and stored
 under `PRSNOOZE_HOME`, not in the repository.
 
 The same menu controls admission at runtime. It can stop accepting new and
+resumed reviews per provider (Claude, Codex, or both), without uninstalling or
+logging out either CLI. Provider switches are generated from the configured
+providers and persist across restarts. Existing settings keep all providers enabled.
+It can also stop accepting all new and
 resumed reviews without interrupting work already queued or running, allow one
 to four simultaneous reviews, require a minimum percentage of the Claude plan
 to remain. Claude reviews are always refused while the active model is Fable. The Fable

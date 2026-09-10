@@ -459,10 +459,15 @@ app.delete("/api/settings/session", (req, res) => {
 
 app.post("/api/settings", authorizeSettings, async (req, res) => {
   try {
+    if (req.body?.disabledProviders !== undefined && (!Array.isArray(req.body.disabledProviders)
+      || req.body.disabledProviders.some((id) => typeof id !== "string" || !PROVIDERS.has(id)))) {
+      return res.status(400).json({ error: "Disabled providers must be a list of configured provider IDs." });
+    }
     const next = normalizeSettings(
       {
         ...runtimeSettings,
         acceptingReviews: req.body?.acceptingReviews ?? runtimeSettings.acceptingReviews,
+        disabledProviders: req.body?.disabledProviders ?? runtimeSettings.disabledProviders,
         minUsageRemainingPct: req.body?.minUsageRemainingPct ?? runtimeSettings.minUsageRemainingPct,
         maxConcurrentReviews: req.body?.maxConcurrentReviews ?? runtimeSettings.maxConcurrentReviews,
         avatar: req.body?.avatarId ? { kind: "preset", id: req.body.avatarId } : runtimeSettings.avatar,
@@ -486,6 +491,9 @@ app.post("/api/settings", authorizeSettings, async (req, res) => {
 // can never drift on what counts as a valid submission, which provider a job
 // lands on, or what gets persisted.
 async function enforceAdmission(provider) {
+  if (runtimeSettings.disabledProviders.includes(provider.id)) {
+    throw httpError(423, `${provider.label || provider.id} reviews are disabled in instance settings.`, "PROVIDER_DISABLED");
+  }
   if (!runtimeSettings.acceptingReviews) {
     throw httpError(423, "This PRSnooze instance is not accepting new reviews.", "REVIEW_INTAKE_LOCKED");
   }
