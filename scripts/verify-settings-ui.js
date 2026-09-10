@@ -177,6 +177,20 @@ async function main() {
     }
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.screenshot({ path: path.join(home, "review.png") });
+    assert.equal(await page.locator("#host-name").evaluate((el) => getComputedStyle(el).fontSize), "16px");
+    // Resume visibility is provider-neutral: successful jobs with a recorded
+    // session show it for both CLIs; a job without a session must not offer it.
+    for (const [id, provider, sessionId] of [["resume-claude", "claude", "claude-session"],
+      ["resume-codex", "codex", "codex-session"], ["no-session", "codex", null]]) {
+      const job = { id, provider, sessionId, state: "done", events: [],
+        prUrl: "https://github.com/example/demo/pull/2", createdAt: Date.now() };
+      await page.route(`**/api/jobs/${id}`, (route) => route.fulfill({ json: job }));
+      await page.route(`**/api/jobs/${id}/**`, (route) => route.fulfill({ json: { resumable: true, reason: "Test fixture" } }));
+      await page.evaluate((job) => { applySnapshot({ jobs: [job] }); selectReview(job.id); }, job);
+      await page.waitForFunction((id) => reviews.get(id)?.finished && reviews.get(id)?.sessionId === (id === "no-session" ? undefined : id === "resume-codex" ? "codex-session" : "claude-session"), id);
+      if (sessionId) await page.locator(`button.resume[data-resume-id="${id}"]`).waitFor({ state: "visible" });
+      else assert.equal(await page.locator(`button.resume[data-resume-id="${id}"]`).count(), 0);
+    }
     assert.deepEqual(errors, []);
     console.log(`Settings UI passed: desktop/mobile, offline avatars, custom upload/reload in hidden data home, old server, failed config/retry. Screenshots: ${home}`);
   } finally {
