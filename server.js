@@ -337,10 +337,12 @@ app.get("/api/config", (req, res) => {
 
 app.get("/api/profile/avatar", (_req, res) => {
   if (runtimeSettings.avatar.kind !== "custom") return res.status(404).end();
-  const avatarPath = path.join(DATA_HOME, AVATAR_FILE);
   res.set("Cache-Control", "no-store");
   res.type(runtimeSettings.avatar.mime);
-  res.sendFile(avatarPath, (error) => {
+  // Resolve this one fixed filename relative to the data home. An absolute
+  // path makes sendFile's dotfile guard reject the default .prsnooze parent.
+  // Do not expose the data directory as static files or allow arbitrary paths.
+  res.sendFile(AVATAR_FILE, { root: DATA_HOME }, (error) => {
     if (error && !res.headersSent) res.status(error.statusCode || 404).end();
   });
 });

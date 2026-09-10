@@ -154,6 +154,10 @@ control a security surface, not a convenience feature.
 - Runtime settings and custom avatars live under `PRSNOOZE_HOME`, never in the
   repository. Accept only raster avatar uploads, cap their decoded size, and
   authenticate before writing either the image or settings file.
+- Test custom uploads with a hidden `.prsnooze` data home, matching the default.
+  Serve only the fixed avatar filename relative to that root: an absolute path
+  trips Express's dotfile guard. Verify image delivery and browser decoding
+  after saving and reloading, not just the successful settings response.
 
 ## Codex stream invariants
 

@@ -11,7 +11,7 @@ const { chromium } = require("playwright");
 
 async function main() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-ui-"));
-  process.env.PRSNOOZE_HOME = home;
+  process.env.PRSNOOZE_HOME = path.join(home, ".prsnooze");
   process.env.REVIEW_PROVIDERS = "claude";
   process.env.CLAUDE_BIN = "/bin/true";
   process.env.GH_BIN = "/bin/true";
@@ -43,6 +43,31 @@ async function main() {
     await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
     await page.reload();
     await page.waitForFunction(() => document.querySelector("#profile-avatar").src.endsWith("/avatars/coral.svg"));
+    // Real desktop-file upload: canvas resize/encode, save, HTTP delivery,
+    // browser decode and persistence after reload, under the hidden data home.
+    await page.locator("#profile-toggle").click();
+    await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
+    const png = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 32;
+      canvas.height = 32;
+      canvas.getContext("2d").fillRect(0, 0, 32, 32);
+      return canvas.toDataURL("image/png").split(",")[1];
+    });
+    await page.locator("#avatar-upload").setInputFiles({ name: "my-picture.png",
+      mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+    await page.waitForFunction(() => {
+      const img = document.querySelector("#settings-avatar-preview");
+      return img.src.startsWith("data:image/") && img.naturalWidth === 256;
+    });
+    await page.locator("#settings-password").fill("ui-test-only");
+    await page.locator("#settings-save").click();
+    await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
+    await page.reload();
+    await page.waitForFunction(() => {
+      const img = document.querySelector("#profile-avatar");
+      return img.src.includes("/api/profile/avatar?") && img.complete && img.naturalWidth === 256;
+    });
     const cover = await page.evaluate(() => {
       const style = getComputedStyle(document.body, "::after");
       return { opacity: Number(style.opacity), mask: style.maskImage, image: style.backgroundImage };
@@ -78,7 +103,7 @@ async function main() {
     await page.locator("#profile-toggle").click();
     await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
     assert.deepEqual(errors, []);
-    console.log(`Settings UI passed: desktop/mobile, offline avatars, save/reload, old server, failed config/retry. Screenshots: ${home}`);
+    console.log(`Settings UI passed: desktop/mobile, offline avatars, custom upload/reload in hidden data home, old server, failed config/retry. Screenshots: ${home}`);
   } finally {
     await browser?.close();
     server.closeAllConnections();

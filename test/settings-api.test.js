@@ -7,7 +7,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { once } = require("node:events");
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-settings-api-"));
+const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-settings-api-")), ".prsnooze");
+fs.mkdirSync(home);
 const modelState = path.join(home, "model");
 fs.writeFileSync(modelState, "sonnet");
 const fakeClaude = path.join(home, "claude");
@@ -69,6 +70,20 @@ test("every default avatar is served locally as SVG", async () => {
     assert.match(response.headers.get("content-type"), /image\/svg\+xml/);
     assert.match(await response.text(), /<svg /);
   }
+});
+
+test("custom avatars in the hidden data home remain readable after saving settings", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=", "base64");
+  const saved = await save({ avatarDataUrl: `data:image/png;base64,${png.toString("base64")}` });
+  assert.equal(saved.status, 200);
+  const { profile } = await saved.json();
+  assert.equal(profile.custom, true);
+  const image = await fetch(`${base}${profile.avatarUrl}`);
+  assert.equal(image.status, 200);
+  assert.match(image.headers.get("content-type"), /image\/png/);
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+  const config = await (await fetch(`${base}/api/config`)).json();
+  assert.equal(config.profile.avatarUrl, profile.avatarUrl);
 });
 
 test("locking intake persists and refuses both browser and shared submit paths", async () => {
