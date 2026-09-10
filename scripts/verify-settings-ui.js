@@ -25,6 +25,10 @@ async function main() {
     const base = `http://127.0.0.1:${server.address().port}`;
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
     const errors = [];
+    const settingRequests = [];
+    page.on("request", (request) => {
+      if (request.url() === `${base}/api/settings` && request.method() === "POST") settingRequests.push(request.postDataJSON());
+    });
     page.on("pageerror", (error) => errors.push(error.message));
     // No internet images/fonts allowed: all profile pictures must work offline.
     await page.route("**/*", (route) => route.request().url().startsWith(base)
@@ -47,6 +51,8 @@ async function main() {
     // browser decode and persistence after reload, under the hidden data home.
     await page.locator("#profile-toggle").click();
     await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
+    assert.equal(await page.locator("#settings-password").isVisible(), false);
+    assert.equal(await page.locator("#settings-unlocked").isVisible(), true);
     const png = await page.evaluate(() => {
       const canvas = document.createElement("canvas");
       canvas.width = 32;
@@ -60,7 +66,6 @@ async function main() {
       const img = document.querySelector("#settings-avatar-preview");
       return img.src.startsWith("data:image/") && img.naturalWidth === 256;
     });
-    await page.locator("#settings-password").fill("ui-test-only");
     await page.locator("#settings-save").click();
     await page.waitForFunction(() => document.querySelector("#settings-backdrop").hidden);
     await page.reload();
@@ -81,6 +86,12 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
     assert.equal(await page.locator("#settings-backdrop").isVisible(), true);
     await page.screenshot({ path: path.join(home, "mobile.png") });
+    assert.equal(await page.evaluate(() => JSON.stringify({ ...sessionStorage, ...localStorage }).includes("ui-test-only")), false);
+    assert.equal(settingRequests.length, 2);
+    assert.ok(settingRequests.every((body) => !("password" in body)));
+    await page.locator("#settings-lock").click();
+    await page.waitForFunction(() => !document.querySelector("#settings-credentials").hidden);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("prsnooze:settings-session")), null);
     await page.locator("#settings-close").click();
 
     // Reproduce a pulled checkout served by the old, still-running process.
@@ -102,6 +113,19 @@ async function main() {
     await page.unroute("**/api/config");
     await page.locator("#profile-toggle").click();
     await page.waitForFunction(() => !document.querySelector("#settings-save").disabled);
+    await page.locator("#settings-close").click();
+    await page.setViewportSize({ width: 1440, height: 960 });
+    // A display-only review fixture: no CLI execution or GitHub review.
+    await page.route("**/api/jobs/ui-fixture/**", (route) => route.fulfill({ json: { events: [] } }));
+    await page.evaluate(async () => {
+      await loadConfig();
+      applySnapshot({ jobs: [{ id: "ui-fixture", state: "done", provider: "claude",
+        prUrl: "https://github.com/example/demo/pull/1", title: "Example review",
+        createdAt: Date.now(), finishedAt: Date.now(), outcome: "commented" }] });
+      selectReview("ui-fixture");
+    });
+    assert.equal(await page.evaluate(() => document.body.classList.contains("hero-mode")), false);
+    await page.screenshot({ path: path.join(home, "review.png") });
     assert.deepEqual(errors, []);
     console.log(`Settings UI passed: desktop/mobile, offline avatars, custom upload/reload in hidden data home, old server, failed config/retry. Screenshots: ${home}`);
   } finally {

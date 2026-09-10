@@ -1306,6 +1306,34 @@ document.addEventListener("keydown", (e) => {
 // the server-enforced intake controls for that host.
 let pendingAvatarDataUrl = null;
 let selectedAvatarId = null;
+const SETTINGS_SESSION_KEY = "prsnooze:settings-session";
+let settingsSession = null;
+try { settingsSession = JSON.parse(sessionStorage.getItem(SETTINGS_SESSION_KEY)); } catch {}
+
+function updateSettingsUnlock() {
+  if (settingsSession && (!/^[a-f0-9]{64}$/.test(settingsSession.token)
+    || !Number.isFinite(settingsSession.expiresAt) || settingsSession.expiresAt <= Date.now())) clearSettingsSession();
+  $("settings-credentials").hidden = !!settingsSession;
+  $("settings-unlocked").hidden = !settingsSession;
+}
+
+function clearSettingsSession() {
+  settingsSession = null;
+  try { sessionStorage.removeItem(SETTINGS_SESSION_KEY); } catch {}
+}
+
+$("settings-lock")?.addEventListener("click", async () => {
+  const token = settingsSession?.token;
+  clearSettingsSession();
+  updateSettingsUnlock();
+  if (token) {
+    try {
+      await fetch("/api/settings/session", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    } catch {
+      settingsFail("Locked in this tab. The server could not be reached to revoke the session; it will expire automatically.");
+    }
+  }
+});
 
 function profileInitial() {
   return (hostName || "P").trim().charAt(0).toUpperCase() || "P";
@@ -1363,6 +1391,7 @@ function renderAvatarChoices() {
 
 async function openSettings() {
   if (!settingsBackdrop) return;
+  updateSettingsUnlock();
   settingsBackdrop.hidden = false;
   settingsPassword.value = "";
   settingsError.textContent = "Loading settings…";
@@ -1475,16 +1504,29 @@ avatarUpload?.addEventListener("change", async () => {
 
 settingsForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!settingsPassword.value) return settingsFail("Enter the settings password.");
+  updateSettingsUnlock();
+  if (!settingsSession && !settingsPassword.value) return settingsFail("Enter the settings password to unlock this tab.");
   settingsSave.disabled = true;
   settingsSave.textContent = "Saving…";
   settingsError.hidden = true;
   try {
+    if (!settingsSession) {
+      const login = await fetch("/api/settings/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: settingsPassword.value }),
+      });
+      const session = await login.json();
+      if (!login.ok) throw new Error(session.error || "Could not unlock settings.");
+      settingsSession = session;
+      settingsPassword.value = "";
+      try { sessionStorage.setItem(SETTINGS_SESSION_KEY, JSON.stringify(session)); } catch {}
+      updateSettingsUnlock();
+    }
     const response = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${settingsSession.token}` },
       body: JSON.stringify({
-        password: settingsPassword.value,
         acceptingReviews: settingAccepting.checked,
         maxConcurrentReviews: Number(settingConcurrency.value),
         minUsageRemainingPct: Number(settingUsageFloor.value),
@@ -1493,6 +1535,11 @@ settingsForm?.addEventListener("submit", async (event) => {
       }),
     });
     const data = await response.json();
+    if (response.status === 401) {
+      clearSettingsSession();
+      updateSettingsUnlock();
+      throw new Error("Settings session expired or the server restarted. Enter the settings password again.");
+    }
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     applyPublicSettings(data);
     closeSettings();

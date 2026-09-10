@@ -140,6 +140,9 @@ control a security surface, not a convenience feature.
 - `PRSNOOZE_SETTINGS_PASSWORD` is separate from
   `MANUAL_APPROVE_PASSWORD`. The former protects host configuration; it never
   authorises a GitHub review or weakens the forced-approval fitness gate.
+- Settings unlock tokens are settings-only, random, revocable, bounded in
+  memory, and expire after 8 hours without sliding renewal. Never persist the
+  password in the browser or accept a settings token on the approval route.
 - Browser and remote submissions, including resume, must pass one shared
   server-side admission policy. A disabled browser button is only presentation.
 - Locking intake or lowering concurrency never cancels queued or running work.

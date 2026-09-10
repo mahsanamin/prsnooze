@@ -220,9 +220,16 @@
           </label>
         </section>
 
+        <div id="settings-credentials">
         <label class="settings-password-label" for="settings-password">Settings password</label>
         <div class="modal-field">
           <input id="settings-password" type="password" placeholder="Settings password" autocomplete="current-password" />
+        </div>
+        <div class="settings-help">Unlock settings for 8 hours in this tab. PR approval still requires its separate password.</div>
+        </div>
+        <div id="settings-unlocked" hidden>
+          <span class="settings-help">Settings unlocked for this tab.</span>
+          <button id="settings-lock" type="button" class="modal-cancel">Lock settings</button>
         </div>
         <div id="settings-error" class="modal-err" hidden></div>
         <div class="modal-actions">

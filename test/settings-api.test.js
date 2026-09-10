@@ -86,6 +86,30 @@ test("custom avatars in the hidden data home remain readable after saving settin
   assert.equal(config.profile.avatarUrl, profile.avatarUrl);
 });
 
+test("settings login grants a settings-only session and logout revokes it", async () => {
+  const login = await fetch(`${base}/api/settings/session`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "settings-secret" }),
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.headers.get("cache-control"), "no-store");
+  const session = await login.json();
+  assert.match(session.token, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(session).includes("settings-secret"), false);
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` };
+  const saved = await fetch(`${base}/api/settings`, { method: "POST", headers, body: JSON.stringify({ maxConcurrentReviews: 2 }) });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).admission.maxConcurrentReviews, 2);
+  const renewed = await fetch(`${base}/api/settings/session`, { method: "POST", headers, body: "{}" });
+  assert.equal(renewed.status, 401);
+  const approval = await fetch(`${base}/api/jobs/nonexistent/approve`, { method: "POST", headers, body: "{}" });
+  assert.equal(approval.status, 401);
+  const logout = await fetch(`${base}/api/settings/session`, { method: "DELETE", headers });
+  assert.equal(logout.status, 204);
+  const denied = await fetch(`${base}/api/settings`, { method: "POST", headers, body: "{}" });
+  assert.equal(denied.status, 401);
+});
+
 test("locking intake persists and refuses both browser and shared submit paths", async () => {
   const saved = await save({
     acceptingReviews: false,

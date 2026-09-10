@@ -427,8 +427,12 @@ const approveThrottle = (ip) => approveLimiter.check(ip);
 const approveFailed = (ip) => approveLimiter.failed(ip);
 const approveSucceeded = (ip) => approveLimiter.succeeded(ip);
 const settingsLimiter = createAttemptLimiter();
+const settingsSessions = require("./lib/settings-sessions").createSettingsSessions();
+const settingsToken = (req) => /^Bearer ([a-f0-9]{64})$/.exec(req.get("Authorization") || "")?.[1];
 
-app.post("/api/settings", async (req, res) => {
+async function authorizeSettings(req, res, next) {
+  res.set("Cache-Control", "no-store");
+  if (req.path === "/api/settings" && settingsSessions.valid(settingsToken(req))) return next();
   const source = req.ip || req.socket.remoteAddress || "unknown";
   const throttled = settingsLimiter.check(source);
   if (throttled.blocked) {
@@ -440,7 +444,20 @@ app.post("/api/settings", async (req, res) => {
     return res.status(401).json({ error: "Not authorized — that settings password doesn't match." });
   }
   settingsLimiter.succeeded(source);
+  next();
+}
 
+app.post("/api/settings/session", authorizeSettings, (_req, res) => {
+  res.json(settingsSessions.issue());
+});
+
+app.delete("/api/settings/session", (req, res) => {
+  settingsSessions.revoke(settingsToken(req));
+  res.set("Cache-Control", "no-store");
+  res.status(204).end();
+});
+
+app.post("/api/settings", authorizeSettings, async (req, res) => {
   try {
     const next = normalizeSettings(
       {

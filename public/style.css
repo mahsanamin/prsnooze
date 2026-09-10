@@ -558,14 +558,16 @@ body::after {
   /* A single surface with a clear window at the bottom-right, so whatever
      HERO_IMAGE is set can actually be seen there. No backdrop-filter: blurring
      the layer behind turned the image into mush. */
-  background: radial-gradient(circle 940px at 97% 104%, rgba(8, 9, 13, 0.04), rgba(18, 20, 26, 0.68) 62%);
+  background: radial-gradient(circle 940px at 97% 104%, rgba(8, 9, 13, 0.08), rgba(18, 20, 26, 0.5) 62%);
   box-shadow: var(--lift);
   position: relative;
   z-index: 1;
 }
 main.app { flex: 1; min-height: 0; display: flex; position: relative; }
-.hero-mode .appcard { background: rgba(18, 20, 26, 0.2); }
+.hero-mode .appcard { background: rgba(18, 20, 26, 0.52); }
 .hero-mode .hero-stage { text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9); }
+.hero-mode .hero-h em { text-shadow: none; }
+.hero-mode .hero-sub, .hero-mode .hero-hint { color: #d1d5df; }
 
 /* The rail toggle and its backdrop only exist below the breakpoint — see the
    narrow block at the bottom of this file. */
@@ -799,7 +801,7 @@ a.prlink:hover .ttl-ico { color: var(--accent); }
 .card.summary > .ico { display: inline-block; vertical-align: -3px; margin-right: 9px; width: 17px; height: 17px; }
 .card.summary { color: var(--muted); }
 .card.summary b { color: var(--green); font-weight: 700; }
-.card.summary { flex: 1 1 auto; min-height: 160px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-left: 3px solid var(--green); background: var(--panel); }
+.card.summary { flex: 1 1 auto; min-height: 160px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-left: 3px solid var(--green); background: rgba(18, 20, 26, 0.88); }
 .card.summary.run { border-left-color: var(--accent); }
 .card.summary.warn { border-left-color: var(--yellow); }
 .card.summary b { color: var(--green); }

@@ -388,7 +388,12 @@ Providers that do not expose plan telemetry are not measured against that floor.
 
 These controls require `PRSNOOZE_SETTINGS_PASSWORD`, which is deliberately
 separate from `MANUAL_APPROVE_PASSWORD`. Saving a setting never grants permission
-to approve a PR, and the settings password is not stored in the browser.
+to approve a PR. The first save unlocks settings for 8 hours in the current
+tab, including across refreshes. The browser stores only a temporary bearer
+token in session storage, never the password. Use **Lock settings** to revoke
+it; restarting the server revokes all sessions. PR approval still requires its
+separate password every time. Use HTTPS or an encrypted Tailscale connection
+to protect passwords and tokens in transit; plain HTTP alone is not encrypted.
 
 Default profile art uses [Personas by Draftbit via DiceBear](https://www.dicebear.com/styles/personas/), licensed under CC BY 4.0. All 20 images are bundled locally; loading the gallery needs no external image service.
 
