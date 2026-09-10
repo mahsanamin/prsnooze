@@ -353,7 +353,7 @@ document.addEventListener("keydown", (e) => {
 // that it was once open as an overlay.
 window.addEventListener("resize", () => { if (window.innerWidth > 860) closeRail(); });
 
-// The composer has two homes: the top bar while a review is on screen, and
+// The composer has two homes: the action row below the header during a review, and
 // centre-stage when the work area is empty. Starting a review is the whole
 // point of prsnooze, so an idle screen hands it the stage rather than leaving a
 // small bar in a corner. Moving the node (not cloning it) keeps its listeners,

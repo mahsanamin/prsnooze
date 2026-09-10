@@ -34,11 +34,6 @@
         <span class="brand-name">prsnooze</span>
         <span class="brand-host" id="host-name"></span>
       </div>
-      <!-- Composer slot. The composer itself lives here while a review is on
-           screen, and moves into #composer-hero when there's nothing to look
-           at — starting a review is the point of this tool, so with an idle
-           screen it gets the whole stage. See placeComposer() in app.js. -->
-      <div id="composer-top"></div>
       <div class="topbar-right">
         <!-- Which model the selected provider reports. A completed review also
              keeps the concrete model reported by that provider's session.
@@ -92,6 +87,8 @@
       </div>
     </header>
 
+    <!-- A dedicated full-width action row, separate from the status header. -->
+    <div id="composer-top"></div>
     <!-- The composer: one node, two homes (#composer-top / #composer-hero). -->
     <div id="composer" class="composer-wrap">
       <form id="submit-form" class="composer">

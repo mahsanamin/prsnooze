@@ -150,7 +150,32 @@ async function main() {
     assert.equal(await page.evaluate(() => document.body.classList.contains("hero-mode")), false);
     assert.equal(await page.locator("#provider-select").inputValue(), "codex");
     assert.equal(await page.locator("#provider-pick").isVisible(), false);
-    assert.equal(await page.locator(".topbar #composer").count(), 1);
+    assert.equal(await page.locator(".topbar #composer").count(), 0);
+    // Stress the actual crowded-header case with both providers and a long
+    // model label, without submitting a real review.
+    await page.evaluate(() => {
+      applyPublicSettings({ admission: { ...instanceSettings, disabledProviders: [] } });
+      document.querySelector("#model-chip").hidden = false;
+      document.querySelector("#model-chip").textContent = "Opus 5 (1M context) · effort: xhigh";
+    });
+    for (const width of [1440, 1024, 390]) {
+      await page.setViewportSize({ width, height: 960 });
+      const geometry = await page.evaluate(() => {
+        const top = document.querySelector(".topbar").getBoundingClientRect();
+        const row = document.querySelector("#composer-top").getBoundingClientRect();
+        const input = document.querySelector("#pr-url").getBoundingClientRect();
+        const button = document.querySelector("#submit-btn").getBoundingClientRect();
+        return { below: row.top >= top.bottom, aligned: Math.abs(row.width - top.width) < 2,
+          inputWidth: input.width, fits: button.right <= innerWidth,
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      assert.equal(geometry.below, true);
+      assert.equal(geometry.aligned, true);
+      assert.equal(geometry.fits, true);
+      assert.equal(geometry.overflow, false);
+      assert.ok(geometry.inputWidth > (width >= 1024 ? 500 : 65));
+    }
+    await page.setViewportSize({ width: 1440, height: 960 });
     await page.screenshot({ path: path.join(home, "review.png") });
     assert.deepEqual(errors, []);
     console.log(`Settings UI passed: desktop/mobile, offline avatars, custom upload/reload in hidden data home, old server, failed config/retry. Screenshots: ${home}`);
