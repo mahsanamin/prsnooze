@@ -2270,7 +2270,7 @@ async function loadConfig() {
     applyPublicSettings(cfg);
     if (cfg.host) {
       hostName = cfg.host;
-      hostNameEl.textContent = `on ${hostName}'s machine`;
+      hostNameEl.textContent = `by ${hostName}`;
       if (heroHost) heroHost.textContent = cfg.hostLogin ? ` as @${cfg.hostLogin}` : ` as ${hostName}`;
       applyPublicSettings(cfg);
     }
