@@ -265,6 +265,10 @@ retry without validating the Bulk Advisory path in CI.
 
 ## Change discipline
 
+- PR list status is a persisted, last-known GitHub fact, not live authorization.
+  Include it in snapshots and preserve it on failed probes. Keep background
+  refresh bounded and non-overlapping; approval/resume still check GitHub live.
+
 - Preserve unrelated user changes and keep patches scoped.
 - Add regression tests for every bug fix, especially provider event handling.
 - Never commit `.env`, auth files, tokens, provider session data, cloned repos,

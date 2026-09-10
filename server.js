@@ -584,6 +584,7 @@ function jobListItem(j) {
     id: j.id,
     provider: j.provider || "claude",
     prUrl: j.prUrl,
+    prStatus: prStateStore.get(j.prUrl),
     state: j.state,
     phase: j.phase,
     outcome: j.outcome || null, // "approved" | "commented" | "changes_requested" | null
@@ -619,7 +620,7 @@ app.get("/api/jobs", (_req, res) => {
 app.get("/api/jobs/:id", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "not found" });
-  res.json(job);
+  res.json({ ...job, prStatus: prStateStore.get(job.prUrl) });
 });
 
 // Remove a finished review from the list, and from disk so it stays gone
@@ -693,6 +694,13 @@ const PR_STATE_REFRESH_FLOOR_MS = 3_000;
 const prStateCache = new Map();   // prUrl -> { at, ttl, value }
 const prStateForced = new Map();  // prUrl -> ts of the last honoured ?refresh=1
 const prStateInflight = new Map(); // prUrl -> in-flight probe
+const { createPrStateStore, createPrStateRefresh } = require("./lib/pr-state-store");
+const prStateStore = createPrStateStore(DATA_HOME);
+const refreshPrStates = createPrStateRefresh({
+  listJobs: () => Array.from(jobs.values()),
+  getState: (url) => prStateStore.get(url),
+  probe: (url) => probePrState(url, url),
+});
 
 // The cache is keyed by PR, not by browser, so anything that makes the stored
 // answer wrong has to drop it for everyone.
@@ -709,9 +717,13 @@ function probePrState(key, prUrl) {
   if (running) return running;
   const probe = fetchPrState(prUrl) // never throws — see lib/github.js
     .then((value) => {
+      const successful = prStateStore.remember(key, value);
+      const known = successful || prStateStore.get(key);
+      const answer = successful || (known ? { ...known, stale: true } : value);
       if (prStateCache.size > 500) prStateCache.clear();
-      prStateCache.set(key, { at: Date.now(), ttl: value.ok ? PR_STATE_TTL_MS : PR_STATE_FAIL_TTL_MS, value });
-      return value;
+      prStateCache.set(key, { at: Date.now(), ttl: value.ok ? PR_STATE_TTL_MS : PR_STATE_FAIL_TTL_MS, value: answer });
+      if (successful) broadcastJobs();
+      return answer;
     })
     .finally(() => prStateInflight.delete(key));
   prStateInflight.set(key, probe);
@@ -1041,6 +1053,9 @@ function start(port = PORT, { banner = false } = {}) {
   // previous server that crashed or was restarted. Must run before we listen.
   hydrateJobs();
   wss = attachWebSocket(server);
+  const statusRefreshTimer = setInterval(() => { refreshPrStates().catch(() => {}); }, 60_000);
+  statusRefreshTimer.unref();
+  server.once("close", () => clearInterval(statusRefreshTimer));
   server.listen(port, "0.0.0.0", () => {
     const addr = server.address();
     console.log(`prsnooze listening on http://0.0.0.0:${addr.port}`);

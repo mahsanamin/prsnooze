@@ -65,6 +65,13 @@ test("concurrent requests for the same PR share one `gh`", async () => {
 test("a cached answer spawns nothing", async () => {
   assert.equal((await get()).state, "OPEN");
   assert.equal(ghCalls(), 1);
+  const snapshot = await (await fetch(`${base}/api/jobs`)).json();
+  assert.equal(snapshot.jobs.find((job) => job.id === "j").prStatus.state, "OPEN");
+  assert.ok(snapshot.jobs.find((job) => job.id === "j").prStatus.checkedAt);
+  const job = await (await fetch(`${base}/api/jobs/j`)).json();
+  assert.equal(job.prStatus.state, "OPEN");
+  assert.ok(fs.existsSync(path.join(process.env.PRSNOOZE_HOME, "pr-states.json")));
+  assert.equal(ghCalls(), 1);
 });
 
 test("?refresh=1 gets past the cache — once", async () => {

@@ -17,7 +17,12 @@ async function main() {
   process.env.CLAUDE_BIN = "/bin/true";
   process.env.GH_BIN = "/bin/true";
   process.env.PRSNOOZE_SETTINGS_PASSWORD = "ui-test-only";
-  const server = require("../server").start(0);
+  // Seed durable data as if a previous server process had observed these PRs.
+  const stored = require("../lib/pr-state-store").createPrStateStore(process.env.PRSNOOZE_HOME);
+  stored.remember("https://github.com/example/demo/pull/90", { ok: true, state: "MERGED" });
+  stored.remember("https://github.com/example/demo/pull/91", { ok: true, state: "CLOSED" });
+  const serverModule = require("../server");
+  const server = serverModule.start(0);
   await once(server, "listening");
   let browser;
   try {
@@ -191,6 +196,26 @@ async function main() {
       if (sessionId) await page.locator(`button.resume[data-resume-id="${id}"]`).waitFor({ state: "visible" });
       else assert.equal(await page.locator(`button.resume[data-resume-id="${id}"]`).count(), 0);
     }
+    for (const [id, number] of [["stored-merged", 90], ["stored-closed", 91]]) {
+      serverModule.jobs.set(id, { id, provider: "codex", state: "done", events: [],
+        prUrl: `https://github.com/example/demo/pull/${number}`, createdAt: Date.now() });
+    }
+    await page.evaluate(() => localStorage.removeItem("prsnooze:selected"));
+    await page.goto(base);
+    await page.locator("#recent-list .prstate.merged").waitFor({ state: "visible" });
+    await page.locator("#recent-list .prstate.closed").waitFor({ state: "visible" });
+    assert.equal(await page.evaluate(() => selectedId), null);
+    await page.reload();
+    await page.locator("#recent-list .prstate.merged").waitFor({ state: "visible" });
+    await page.route("**/api/jobs/stored-merged/pr-state*", (route) => route.fulfill({ status: 503, json: { ok: false } }));
+    await page.evaluate(() => selectReview("stored-merged"));
+    await page.waitForFunction(() => reviews.get("stored-merged")?.prStateChecked);
+    assert.equal(await page.locator(".review-panel.active .prstate.merged").count(), 1);
+    // The same snapshot path used by the background worker updates the list
+    // when a closed PR reopens, without selecting that PR.
+    await page.evaluate(() => applySnapshot({ jobs: [{ id: "stored-closed", state: "done",
+      prStatus: { ok: true, state: "OPEN", checkedAt: Date.now() + 1 } }] }));
+    assert.equal(await page.locator("#recent-list .prstate.closed").count(), 0);
     assert.deepEqual(errors, []);
     console.log(`Settings UI passed: desktop/mobile, offline avatars, custom upload/reload in hidden data home, old server, failed config/retry. Screenshots: ${home}`);
   } finally {

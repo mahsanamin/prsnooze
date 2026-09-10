@@ -307,7 +307,21 @@ function upsertReview(data) {
   else if (data.nameWithOwner && !rev.prMeta) rev.prMeta = { nameWithOwner: data.nameWithOwner, number: data.number, title: data.title };
   if (data.requestedBy) rev.requestedBy = data.requestedBy;
   if (data.lastResumeRequestedBy) rev.lastResumeRequestedBy = data.lastResumeRequestedBy;
+  if (data.prStatus?.ok) {
+    applyPrStatus(rev, data.prStatus);
+    if (rev.els?.head) renderHead(rev);
+  }
   return rev;
+}
+
+function applyPrStatus(rev, data) {
+  if (!data?.ok) return;
+  if (data.checkedAt && rev.prStateCheckedAt > data.checkedAt) return;
+  rev.prStateOk = true;
+  rev.prState = data.state;
+  rev.prApproved = !!data.approved;
+  rev.prStateCheckedAt = data.checkedAt || Date.now();
+  rev.prStateStale = !!data.stale || Date.now() - rev.prStateCheckedAt > 5 * 60_000;
 }
 
 // ----------------------------------------------------------------- lists ----
@@ -437,6 +451,7 @@ function railRow(r) {
       const ps = document.createElement("span");
       ps.className = `chip prstate ${r.prState.toLowerCase()}`;
       ps.textContent = r.prState.toLowerCase();
+      ps.title = `Last known GitHub status${r.prStateCheckedAt ? `; checked ${new Date(r.prStateCheckedAt).toLocaleString()}` : ""}`;
       foot.appendChild(ps);
     }
     if (r.finishedAt) {
@@ -738,6 +753,7 @@ function renderHead(rev) {
     st.title = rev.prState === "MERGED"
       ? "This PR has been merged on GitHub"
       : "This PR was closed on GitHub without merging";
+    if (rev.prStateCheckedAt) st.title += `; last checked ${new Date(rev.prStateCheckedAt).toLocaleString()}`;
     head.appendChild(st);
   }
   // Somebody else's approval. A fact about the PR, like the merged chip beside
@@ -998,6 +1014,7 @@ async function loadFinishedLog(rev) {
     if (!r.ok) return;
     const job = await r.json();
     if (job.prMeta) rev.prMeta = job.prMeta;
+    applyPrStatus(rev, job.prStatus);
     rev.state = job.state; rev.outcome = job.outcome || rev.outcome; rev.finished = true;
     if (job.summary?.finalText) rev.summaryText = job.summary.finalText;
     if (job.summary) rev.stats = {
@@ -1851,13 +1868,10 @@ async function loadPrState(rev, { force = false } = {}) {
     // — otherwise a refused approval is handed back the state it just disproved.
     const r = await fetch(`/api/jobs/${encodeURIComponent(rev.id)}/pr-state${force ? "?refresh=1" : ""}`);
     const data = r.ok ? await r.json() : { ok: false };
-    rev.prStateOk = !!data.ok;
-    rev.prState = String(data.state || "").toUpperCase() || null;
-    rev.prApproved = !!data.approved;
+    if (data.ok) applyPrStatus(rev, data);
+    else rev.prStateStale = true;
   } catch {
-    rev.prStateOk = false;
-    rev.prState = null;
-    rev.prApproved = false;
+    rev.prStateStale = true;
   } finally {
     rev.prStateLoading = false;
     rev.prStateChecked = true;

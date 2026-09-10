@@ -413,6 +413,16 @@ to a system Chromium. It runs a disposable server and never submits a review.
 
 ## Approving by hand
 
+PR state (open, closed, or merged) is cached in `PRSNOOZE_HOME/pr-states.json`
+and included in review-list updates, so known status survives page refreshes
+and server restarts. A lightweight in-process refresher checks at most three
+PRs per minute among the newest 50 reviews, with a five-minute minimum between
+background checks for each PR. Merged PRs are skipped. Clicking a review still
+requests a current status through the shared short-lived cache. GitHub failures
+retain the last known status rather than erasing it; this is cached information,
+not a guarantee of real-time freshness. Approval and resume retain their live
+server-side checks.
+
 Risky or large PRs come back as *commented* on purpose — the merge decision stays with a human. On any finished review there's an **Approve PR** button, gated by a shared password so it works over a proxy as well as on localhost.
 
 The button is always there and always live. Clicking it confirms what's about to happen, then asks for the password — **every time**. There is no unlocking, nothing is armed, and nothing is remembered: no cookie, no session, no browser you have to remember to re-lock before you walk away from it.
