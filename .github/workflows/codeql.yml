@@ -27,10 +27,10 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           # Adds the queries that matter for this codebase (injection, unsafe
           # deserialization, XSS) on top of the default set.
           queries: security-extended
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
