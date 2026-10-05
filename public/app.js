@@ -493,6 +493,16 @@ function railRow(r) {
       ps.title = `Last known GitHub status${r.prStateCheckedAt ? `; checked ${new Date(r.prStateCheckedAt).toLocaleString()}` : ""}`;
       foot.appendChild(ps);
     }
+    // Approved on GitHub, by anyone, after or apart from this run. A PR-level
+    // fact like merged, so it shows on every run of the PR, not only on the run
+    // whose own outcome was the approval.
+    if (r.prApproved && r.outcome !== "approved" && r.prState !== "CLOSED") {
+      const pa = document.createElement("span");
+      pa.className = "chip prapproved";
+      pa.textContent = "pr approved";
+      pa.title = `Approved on GitHub${r.prStateCheckedAt ? `; checked ${new Date(r.prStateCheckedAt).toLocaleString()}` : ""}`;
+      foot.appendChild(pa);
+    }
     if (r.finishedAt) {
       const when = document.createElement("span");
       when.className = "srow-when";
@@ -800,8 +810,10 @@ function renderHead(rev) {
   // action. Two conditions keep it from repeating what's already on screen: the
   // review's own badge says "approved" when THIS review approved (which is why
   // there is no affirmation for that case — it would be the same word twice),
-  // and a merged or closed PR is already accounted for above.
-  if (rev.prApproved && rev.prState === "OPEN" && rev.outcome !== "approved") {
+  // and a closed PR was never approved into anything. A merged PR still shows
+  // it: the older runs of a PR said only "commented" while the PR they belong
+  // to had been approved and merged.
+  if (rev.prApproved && rev.prState !== "CLOSED" && rev.outcome !== "approved") {
     const ap = document.createElement("span");
     ap.className = "badge prapproved";
     ap.textContent = "already approved";
