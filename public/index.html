@@ -340,6 +340,28 @@
       </div>
     </div>
 
+    <!-- The owner's follow-up message into a review's session. The settings
+         session is used when this tab has one; otherwise the settings password
+         is asked for and sent with this one request only. -->
+    <div id="msg-backdrop" class="modal-backdrop" hidden>
+      <form id="msg-form" class="modal-card">
+        <div class="modal-title">Message the review</div>
+        <div id="msg-sub" class="modal-sub"></div>
+        <div class="modal-field">
+          <textarea id="msg-input" rows="4" maxlength="2000" placeholder="For example: if everything is fixed now, go ahead and approve."></textarea>
+        </div>
+        <div id="msg-password-row" class="modal-field">
+          <input id="msg-password" type="password" placeholder="Settings password" autocomplete="current-password" />
+        </div>
+        <div class="settings-help">Owner only. An approval still has to pass the approval policy.</div>
+        <div id="msg-err" class="modal-err" hidden></div>
+        <div class="modal-actions">
+          <button id="msg-cancel" type="button" class="modal-cancel">Cancel</button>
+          <button id="msg-submit" type="submit" class="confirm-ok">Send</button>
+        </div>
+      </form>
+    </div>
+
     <!-- Asked on every approval. There is no unlock step and nothing is kept:
          the password travels with the click that uses it and the field is
          cleared on the way out. See openPassword() in app.js. -->

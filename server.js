@@ -277,7 +277,8 @@ app.use(
         error: job.error || null,
       };
     },
-    resumeReview: (id, opts) => resumeReviewJob(id, opts),
+    // Only these two fields: an owner message can never arrive over the remote API.
+    resumeReview: (id, { force = false, requestedBy = null } = {}) => resumeReviewJob(id, { force, requestedBy }),
   }),
 );
 app.use(express.json({ limit: "1mb" }));
@@ -474,10 +475,15 @@ const settingsLimiter = createAttemptLimiter();
 const settingsSessions = require("./lib/settings-sessions").createSettingsSessions();
 const settingsToken = (req) => /^Bearer ([a-f0-9]{64})$/.exec(req.get("Authorization") || "")?.[1];
 
+// The owner's follow-up message route. It is the one job route that accepts the
+// settings session, because sending text into a review session is the owner's.
+const OWNER_MESSAGE_PATH = /^\/api\/jobs\/[^/]+\/message$/;
+
 async function authorizeSettings(req, res, next) {
   res.set("Cache-Control", "no-store");
-  if (["/api/settings", "/api/settings/mention-watch/run", "/api/settings/auto-resume/run"].includes(req.path)
-    && settingsSessions.valid(settingsToken(req))) return next();
+  const tokenRoute = ["/api/settings", "/api/settings/mention-watch/run", "/api/settings/auto-resume/run"].includes(req.path)
+    || OWNER_MESSAGE_PATH.test(req.path);
+  if (tokenRoute && settingsSessions.valid(settingsToken(req))) return next();
   const source = req.ip || req.socket.remoteAddress || "unknown";
   const throttled = settingsLimiter.check(source);
   if (throttled.blocked) {
@@ -876,7 +882,7 @@ function isJobActive(job) {
 // Resume one finished review. Shared by the browser route and the remote API:
 // the gate, the refusal reasons and what `force` may override have to be
 // identical whether a person clicked the button or a colleague's CLI asked.
-async function resumeReviewJob(jobId, { force = false, requestedBy = null } = {}) {
+async function resumeReviewJob(jobId, { force = false, requestedBy = null, ownerMessage = null } = {}) {
   const job = jobs.get(jobId);
   if (!job) throw httpError(404, "not found", "NOT_FOUND");
   const sessionId = reviewSessionId(job);
@@ -922,10 +928,16 @@ async function resumeReviewJob(jobId, { force = false, requestedBy = null } = {}
       { requestedBy, at: Date.now() },
     ].slice(-20);
   }
+  // Always overwritten, never inherited: a message belongs to the one resume it
+  // was sent with, so a later resume from the button or the CLI carries none.
+  job.ownerMessage = ownerMessage || null;
   job.mode = "verify";
   job.resumeSessionId = sessionId;
   job.state = "queued";
   job.finished = false;
+  if (ownerMessage) {
+    job.events.push({ ts: Date.now(), kind: "log", message: `Owner's message: ${ownerMessage}` });
+  }
   job.events.push({
     ts: Date.now(),
     kind: "verify_restart",
@@ -937,6 +949,28 @@ async function resumeReviewJob(jobId, { force = false, requestedBy = null } = {}
   queue.enqueue(job);
   return { ok: true, jobId: job.id, provider: job.provider || "claude", reason: job.resumeReason || null };
 }
+
+// The owner's follow-up: resume this review's session with a message from the
+// owner, e.g. "if everything is fixed, go ahead and approve". Settings password
+// or settings session only, checked before the job lookup. The remote API has
+// no equivalent route on purpose.
+app.post("/api/jobs/:id/message", authorizeSettings, async (req, res) => {
+  try {
+    const raw = req.body?.message;
+    const message = typeof raw === "string" ? raw.replace(/\r\n?/g, "\n").trim() : "";
+    if (!message) throw httpError(400, "Write a message to send.", "BAD_OWNER_MESSAGE");
+    if (message.length > OWNER_MESSAGE_MAX) {
+      throw httpError(400, `A message is limited to ${OWNER_MESSAGE_MAX} characters.`, "BAD_OWNER_MESSAGE");
+    }
+    // Forced: the owner asking is reason enough, as with Force resume. A merged
+    // or closed PR, or a review with no session, still refuses.
+    const result = await resumeReviewJob(req.params.id, { force: true, ownerMessage: message });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message, code: e.code, assessment: e.assessment });
+  }
+});
+const OWNER_MESSAGE_MAX = 2000;
 
 app.post("/api/jobs/:id/verify", async (req, res) => {
   try {

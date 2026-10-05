@@ -25,6 +25,7 @@ your own server or install either AI provider for that.
 - **Use your project's rules.** PRSnooze reads repository review skills and guidance, with a bundled fallback when none exists.
 - **Get reviews by being mentioned.** Turn on the mention watch in settings and PRSnooze reviews PRs where a teammate @mentions you in a comment, checking every 5 minutes by default.
 - **Follow up automatically.** Turn on auto-resume and PRSnooze re-checks its own review when the author pushes new commits, to see whether the comments were addressed.
+- **Talk to a finished review.** The owner can send a message into a review's session, such as "if everything is fixed, go ahead and approve".
 - **Point a review at what worries you.** The instance owner can add a review focus, such as "check the migration rollback", when starting a review.
 - **Control your server.** Set a profile picture, enable or disable providers, pause new work, and choose one to four simultaneous reviews.
 

@@ -117,3 +117,21 @@ test("resume prompt honours auto-approve being switched off", () => {
   const p = verifyPrompt({ autoApprove: false });
   assert.match(p, /Do not approve or request changes/);
 });
+
+// ------------------------------------------------------- owner's message --
+
+test("an owner's message rides on the resume, ranked below the approval policy", () => {
+  const msg = "If everything is fixed now, go ahead and approve.";
+  const p = buildVerifyPrompt({
+    meta: META,
+    approval: { autoApprove: true, matchedTests: [], reReview: true },
+    ownerMessage: msg,
+  });
+  assert.ok(p.includes(msg));
+  assert.match(p, /MESSAGE FROM THE OWNER OF THIS PRSNOOZE HOST/);
+  assert.match(p, /approve ONLY when the APPROVAL POLICY below\s+allows it/);
+  assert.match(p, /does not let you skip a check, drop a finding, or lower a severity/);
+  // The policy comes after the message, so the message is never the last word.
+  assert.ok(p.indexOf(msg) < p.indexOf("APPROVAL POLICY", p.indexOf(msg)));
+  assert.doesNotMatch(verifyPrompt(), /MESSAGE FROM THE OWNER/);
+});

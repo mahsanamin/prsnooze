@@ -145,6 +145,7 @@ const ICON_PATHS = {
   wrench: '<path d="M14.5 6.2a3.8 3.8 0 0 1 5.2 5.2l-2.4-2.4-2.8 2.8-2.4-2.4 2.8-2.8-.4-.4z"/><path d="m12.3 11.5-7.2 7.2a1.8 1.8 0 0 0 2.5 2.5l7.2-7.2"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.5h-4.5"/>',
+  send: '<path d="M21 3 10 14"/><path d="M21 3 14.5 21l-4.5-7-7-4.5z"/>',
   branch: '<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M6.5 8.5v7"/><path d="M15 9.6a5.5 5.5 0 0 1-5.4 4.5"/>',
   diff: '<path d="M6 3.5v17"/><path d="M3.5 6h5"/><path d="M18 20.5v-17"/><path d="M15.5 18h5"/>',
   timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.5 1.6"/><path d="M9.5 2.5h5"/>',
@@ -831,6 +832,17 @@ function renderHead(rev) {
           : "Run this review again, continuing the original session";
       head.appendChild(b);
 
+      // The owner's follow-up message, sent into this same session. Shown to
+      // everyone like Approve; the dialog asks for the settings password unless
+      // this tab already holds the settings session.
+      const m = document.createElement("button");
+      m.className = "resume message";
+      m.dataset.messageId = rev.id;
+      m.appendChild(iconEl("send"));
+      m.appendChild(document.createTextNode("Send message"));
+      m.title = "Owner only: resume this review with a message, e.g. approve if everything is fixed";
+      head.appendChild(m);
+
       // Force only appears once a real attempt has been refused.
       if (rev.resumeArmed) {
         const state = String(a?.signals?.prState || "").toUpperCase();
@@ -1172,6 +1184,8 @@ function finish(rev, state) {
 panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
   if (ap && ap.dataset.id && !ap.disabled) { openConfirm(ap.dataset.id); return; }
+  const mb = e.target.closest(".resume.message");
+  if (mb && mb.dataset.messageId) { openMessage(mb.dataset.messageId); return; }
   const fr = e.target.closest(".resume.force");
   if (fr && fr.dataset.forceId && !fr.disabled) { verifyReview(fr.dataset.forceId, true); return; }
   const rs = e.target.closest(".resume");
@@ -1211,6 +1225,75 @@ function closeConfirm({ keep = false } = {}) {
   confirmBackdrop.hidden = true;
   if (!keep) pendingApprove = null;
 }
+
+// ---------------------------------------------------- owner's message -----
+let pendingMessage = null;
+function openMessage(id) {
+  const rev = reviews.get(id);
+  if (!rev) return;
+  updateSettingsUnlock();
+  pendingMessage = id;
+  const num = rev.prMeta?.number || prNumberFromUrl(rev.prUrl);
+  const where = rev.prMeta?.nameWithOwner ? `${rev.prMeta.nameWithOwner}#${num}` : (num ? `PR #${num}` : "this PR");
+  $("msg-sub").textContent = `Resumes the review of ${where} in its original session with your message.${hostLogin ? ` Anything it posts is posted as @${hostLogin}.` : ""}`;
+  $("msg-input").value = "";
+  $("msg-password").value = "";
+  $("msg-password-row").hidden = !!settingsSession;
+  $("msg-err").hidden = true;
+  $("msg-submit").disabled = false;
+  $("msg-submit").textContent = "Send";
+  $("msg-backdrop").hidden = false;
+  setTimeout(() => $("msg-input").focus(), 30);
+}
+function closeMessage() {
+  $("msg-backdrop").hidden = true;
+  $("msg-password").value = "";
+  pendingMessage = null;
+}
+function msgFail(message) {
+  $("msg-err").textContent = message;
+  $("msg-err").hidden = false;
+}
+$("msg-cancel")?.addEventListener("click", closeMessage);
+$("msg-backdrop")?.addEventListener("click", (e) => { if (e.target === $("msg-backdrop")) closeMessage(); });
+$("msg-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = pendingMessage;
+  const rev = reviews.get(id);
+  const message = $("msg-input").value.trim();
+  if (!rev) return closeMessage();
+  if (!message) return msgFail("Write a message to send.");
+  const headers = { "Content-Type": "application/json" };
+  const body = { message };
+  if (settingsSession?.token) headers.Authorization = `Bearer ${settingsSession.token}`;
+  else if ($("msg-password").value) body.password = $("msg-password").value;
+  else return msgFail("Enter the settings password.");
+  $("msg-submit").disabled = true;
+  $("msg-submit").textContent = "Sending…";
+  try {
+    const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/message`, { method: "POST", headers, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (r.status === 401 && settingsSession) {
+      clearSettingsSession();
+      updateSettingsUnlock();
+      $("msg-password-row").hidden = false;
+      throw new Error("Settings session expired or the server restarted. Enter the settings password.");
+    }
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    closeMessage();
+    rev.resumeArmed = false;
+    rev.resume = null;
+    if (rev.es) { try { rev.es.close(); } catch {} rev.es = null; }
+    rev.finished = false; rev.state = "running"; rev.outcome = null;
+    rev.prStateChecked = false;
+    ensurePanel(rev); openStream(rev); selectReview(id); renderLists();
+    showToast("Message sent. The review is resuming in its original session.");
+  } catch (error) {
+    msgFail(error.message);
+    $("msg-submit").disabled = false;
+    $("msg-submit").textContent = "Send";
+  }
+});
 
 function openPassword() {
   pwErr.hidden = true;
@@ -1339,6 +1422,7 @@ document.addEventListener("keydown", (e) => {
   // of the confirmation.
   if (blockedBackdrop && !blockedBackdrop.hidden) { closeBlocked(); return; }
   if (pwBackdrop && !pwBackdrop.hidden) { closePassword(); return; }
+  if (!$("msg-backdrop")?.hidden) { closeMessage(); return; }
   if (confirmBackdrop && !confirmBackdrop.hidden) { closeConfirm(); return; }
   if (settingsBackdrop && !settingsBackdrop.hidden) { closeSettings(); return; }
 });

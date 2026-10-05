@@ -320,3 +320,41 @@ test("a custom raster avatar is stored and served from the host", async () => {
   assert.equal(image.status, 200);
   assert.match(image.headers.get("content-type"), /^image\/png/);
 });
+
+test("only the owner can send a follow-up message into a review session", async () => {
+  const send = (body, headers = {}) => fetch(`${base}/api/jobs/owner-msg/message`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+  jobs.set("owner-msg", { id: "owner-msg", provider: "claude", sessionId: "session-1",
+    prUrl: "https://github.com/example/repo/pull/1", state: "done", events: [] });
+
+  // No credential, a wrong password, a fake token: all refused before the job is touched.
+  assert.equal((await send({ message: "approve if all good" })).status, 401);
+  assert.equal((await send({ message: "approve if all good", password: "wrong" })).status, 401);
+  assert.equal((await send({ message: "approve if all good" }, { Authorization: `Bearer ${"b".repeat(64)}` })).status, 401);
+  // The CLI's API has no such route, and its resume ignores any message it is sent.
+  const remote = await fetch(`${base}/api/remote/jobs/owner-msg/message`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: "approve" }) });
+  assert.equal(remote.status, 404);
+  assert.equal(jobs.get("owner-msg").state, "done");
+  assert.equal(jobs.get("owner-msg").ownerMessage, undefined);
+
+  // With the password, an empty message is a 400 and a real one reaches the
+  // admission policy (locked here so nothing actually runs).
+  assert.equal((await save({ acceptingReviews: false, disabledProviders: [] })).status, 200);
+  const empty = await send({ message: "  ", password: "settings-secret" });
+  assert.equal(empty.status, 400);
+  assert.equal((await empty.json()).code, "BAD_OWNER_MESSAGE");
+  const locked = await send({ message: "approve if all good", password: "settings-secret" });
+  assert.equal(locked.status, 423);
+
+  // The settings session works too.
+  const login = await fetch(`${base}/api/settings/session`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: "settings-secret" }) });
+  const { token } = await login.json();
+  const viaSession = await send({ message: "approve if all good" }, { Authorization: `Bearer ${token}` });
+  assert.equal(viaSession.status, 423);
+  assert.equal(jobs.get("owner-msg").state, "done");
+  jobs.delete("owner-msg");
+  await fetch(`${base}/api/settings/session`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+  assert.equal((await save({ acceptingReviews: true })).status, 200);
+});

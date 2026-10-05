@@ -165,6 +165,14 @@ control a security surface, not a convenience feature.
   `resumeReviewJob`, never around the resume gate or admission, and it follows
   up each pushed head once (`autoResumedAtSha`) so a review cannot resume on
   every check.
+- The owner's follow-up message (`POST /api/jobs/:id/message`) needs the
+  settings password or a settings session, checked before the job lookup. It
+  is the only job route that accepts the settings token. The remote API must
+  never gain an equivalent, and its resume callback passes only `force` and
+  `requestedBy`. `job.ownerMessage` is set fresh on every resume and cleared
+  after the run, so a message never rides along on a later resume. In the
+  prompt it sits before the approval policy and below it: it may ask for an
+  approval, never force one.
 - Browser and remote submissions, including resume, must pass one shared
   server-side admission policy. A disabled browser button is only presentation.
 - Locking intake or lowering concurrency never cancels queued or running work.

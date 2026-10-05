@@ -219,6 +219,15 @@ On each check it looks at this host's reviews from the last 14 days, the newest 
 - Each pushed commit is followed up once. If the author pushes again later, it follows up again.
 - The resumed review shows that auto-resume asked for it. The settings panel shows when the last check ran, how many reviews it resumed, when the next one is due, and any error.
 
+### Send a message into a finished review
+
+The owner can resume a finished review with a message of their own, for example "if everything is fixed now, go ahead and approve". Click **Send message** on the review, write the message, and send. If the tab is not unlocked for settings, the dialog also asks for the settings password, which is sent with that one request and not kept.
+
+- The review resumes in its original session, the same as **Force resume**, with your message added. Merged and closed PRs, and reviews with no saved session, are still refused, and intake lock, provider switches and the usage floor still apply.
+- A message can ask for an approval, but the approval policy still decides. If the policy says comment, the review comments and says what still blocks an approval. The message cannot make it skip a check or lower a severity.
+- Only the settings password or an unlocked settings session is accepted. The `snooze` CLI and `/api/remote/*` have no way to send a message, and a resume from them never carries one.
+- The message is used for that one resume only, and it shows as a log line in the review, so anyone who can open the page can read it.
+
 Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](provider-adapters.md).
 
 ## Reach your team's other instances from the terminal

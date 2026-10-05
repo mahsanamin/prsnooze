@@ -476,6 +476,10 @@ body::after {
 .modal-sub { font-size: 12.5px; color: var(--muted); margin: 6px 0 16px; line-height: 1.5; }
 .modal-field { position: relative; display: flex; align-items: center; }
 .modal-field input { flex: 1; padding: 10px 40px 10px 12px; border-radius: 10px; border: 1px solid var(--border-2); background: rgba(8, 9, 13, 0.6); color: var(--text); font-size: 14px; }
+.modal-field textarea { flex: 1; min-height: 90px; resize: vertical; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-2); background: rgba(8, 9, 13, 0.6); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; }
+.modal-field textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+#msg-password-row[hidden] { display: none; }
+#msg-form .modal-field + .modal-field { margin-top: 10px; }
 .modal-field input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .modal-eye { position: absolute; right: 6px; display: flex; align-items: center; background: none; border: none; cursor: pointer; color: var(--faint); padding: 5px; border-radius: 6px; }
 .modal-eye:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
