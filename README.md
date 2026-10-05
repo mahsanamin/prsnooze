@@ -23,6 +23,7 @@ your own server or install either AI provider for that.
 - **Follow the review live.** See commands, findings, and the final result in the browser.
 - **Continue after fixes.** Resume a saved review with the same provider and session.
 - **Use your project's rules.** PRSnooze reads repository review skills and guidance, with a bundled fallback when none exists.
+- **Point a review at what worries you.** The instance owner can add a review focus, such as "check the migration rollback", when starting a review.
 - **Control your server.** Set a profile picture, enable or disable providers, pause new work, and choose one to four simultaneous reviews.
 
 PRSnooze has no separate AI service fee. Reviews use the host's configured
@@ -220,6 +221,10 @@ Codex, pause new reviews, change concurrency, and set a minimum remaining
 Claude plan percentage. Codex plan limits are not reported by this integration,
 so that percentage does not apply to Codex. Claude reviews are refused while
 the detected model is Fable.
+
+While settings are unlocked in a tab, a **Review focus** box appears under the
+PR field. Use it to tell the review what to dig into. Only the owner's unlocked
+session can send one; see [review focus](docs/usage.md#tell-a-review-what-to-look-at).
 
 Manual PR approval uses a **different** password, `MANUAL_APPROVE_PASSWORD`,
 and still refuses unresolved blocking findings. Neither password is a general

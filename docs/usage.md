@@ -178,6 +178,18 @@ Reviews run on somebody's laptop, and that used to decide how strict they were: 
 
 Approval is the one place a personal skill is allowed an opinion, in one direction. A skill that says *comment* where the score says approve is followed. A skill that says *approve* where the score says comment is ignored. Strictest answer wins.
 
+### Tell a review what to look at
+
+The instance owner can steer one review. Unlock settings in the tab first (the profile picture beside the logo, then save once with the settings password). A **Review focus** box then appears under the PR field. Write what you want the review to dig into, for example "check the retry logic against the old client", and start the review as usual. The same focus goes to every PR URL in that submission, and the box clears once they are queued.
+
+How it is used:
+
+- It goes into the prompt as its own section, below the project's rules, the host's playbook, the approval policy and the floor. The review spends extra effort on what you named and says whether that concern holds up.
+- It does not narrow the review. Every other check still runs, and findings outside the focus keep their severity. It cannot ask for an approval.
+- The server only accepts a focus with a live settings session. Anyone else who sends one gets `401 OWNER_SESSION_REQUIRED` and no job is queued. A review without a focus stays open to anyone, as before. The `snooze` CLI and `/api/remote/*` do not take a focus.
+- The focus is saved on the job and shown as a log line in the review, so anyone who can open the page can read it. Do not put secrets in it. It is capped at 2000 characters.
+- Typing a focus on a PR that already has a finished review starts a fresh review instead of resuming the old session.
+
 Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](provider-adapters.md).
 
 ## Reach your team's other instances from the terminal

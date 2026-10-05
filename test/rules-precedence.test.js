@@ -135,3 +135,31 @@ test("a skill-free prompt still carries the approval policy", () => {
   assert.match(p, /APPROVAL POLICY/);
   assert.doesNotMatch(p, /PROJECT FLOOR/);
 });
+
+// ------------------------------------------------------ owner's review focus --
+
+test("an owner's review focus is in the prompt, ranked below the rules", () => {
+  const focus = "Check the retry logic against the old client.";
+  const p = buildPrompt({
+    prUrl: PR,
+    skill: projectSkill({ subordinate: developerSkill }),
+    approval: { autoApprove: true, matchedTests: [] },
+    reviewIntent: focus,
+  });
+  assert.match(p, /OWNER'S REVIEW FOCUS \(SUBORDINATE\)/);
+  assert.ok(p.includes(focus));
+  assert.match(p, /It does NOT narrow the review/);
+  assert.match(p, /It does NOT change the APPROVAL POLICY/);
+  // The floor comes after the focus, so nothing in the focus reads as the last word.
+  assert.ok(p.indexOf("OWNER'S REVIEW FOCUS") > p.indexOf("PROJECT PLAYBOOK BODY"));
+  assert.ok(p.indexOf("OWNER'S REVIEW FOCUS") < p.indexOf("PROJECT FLOOR"));
+});
+
+test("no focus, no focus section, including the skill-free prompt", () => {
+  assert.doesNotMatch(prompt(projectSkill()), /OWNER'S REVIEW FOCUS/);
+  const blank = buildPrompt({ prUrl: PR, skill: projectSkill(), reviewIntent: "   " });
+  assert.doesNotMatch(blank, /OWNER'S REVIEW FOCUS/);
+  const bare = buildPrompt({ prUrl: PR, skill: null, reviewIntent: "look at the SQL" });
+  assert.match(bare, /OWNER'S REVIEW FOCUS/);
+  assert.match(bare, /look at the SQL/);
+});

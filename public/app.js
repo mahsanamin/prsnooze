@@ -166,8 +166,9 @@ form.addEventListener("submit", async (e) => {
   // If the input points at a PR that already has a finished review with a
   // saved session, the button re-checks that review (resumes the session)
   // instead of starting a fresh one. See updateSubmitButton().
+  // A review focus asks for a fresh review, so it skips the resume path.
   const verifyId = submitBtn.dataset.verifyId;
-  if (verifyId && reviews.has(verifyId)) { await verifyReview(verifyId); return; }
+  if (verifyId && reviews.has(verifyId) && !reviewIntent()) { await verifyReview(verifyId); return; }
   await submitUrls(input.value);
 });
 input.addEventListener("input", updateSubmitButton);
@@ -180,6 +181,13 @@ providerSelect?.addEventListener("change", () => {
   refreshUsage();
   refreshModel();
 });
+
+// The owner's optional steer for the next review. Only read while the field is
+// showing, which is only while this tab holds a settings session.
+function reviewIntent() {
+  const wrap = $("intent-wrap");
+  return wrap && !wrap.hidden ? $("review-intent").value.trim() : "";
+}
 
 function selectedProvider() {
   return providerSelect?.value || defaultProvider || "claude";
@@ -195,14 +203,21 @@ async function submitUrls(raw) {
 
   let firstId = null;
   const errors = [];
+  const intent = reviewIntent();
+  const headers = { "Content-Type": "application/json" };
+  if (intent && settingsSession?.token) headers.Authorization = `Bearer ${settingsSession.token}`;
   for (const prUrl of urls) {
     try {
       const r = await fetch("/api/review", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prUrl, provider: selectedProvider() }),
+        headers,
+        body: JSON.stringify({ prUrl, provider: selectedProvider(), ...(intent ? { intent } : {}) }),
       });
       const data = await r.json();
+      if (data.code === "OWNER_SESSION_REQUIRED") {
+        clearSettingsSession();
+        updateSettingsUnlock();
+      }
       if (!r.ok) { errors.push(`${prUrl}: ${data.error || `HTTP ${r.status}`}`); continue; }
       const rev = upsertReview({
         id: data.jobId,
@@ -218,6 +233,7 @@ async function submitUrls(raw) {
     }
   }
   input.value = "";
+  if (!errors.length) $("review-intent").value = "";
   if (firstId) selectReview(firstId);
   submitMsg.textContent = errors.length ? errors.join(" · ") : urls.length > 1 ? `Queued ${urls.length}.` : "Queued.";
   submitMsg.classList.toggle("error", errors.length > 0);
@@ -1330,12 +1346,14 @@ let selectedAvatarId = null;
 const SETTINGS_SESSION_KEY = "prsnooze:settings-session";
 let settingsSession = null;
 try { settingsSession = JSON.parse(sessionStorage.getItem(SETTINGS_SESSION_KEY)); } catch {}
+updateSettingsUnlock();
 
 function updateSettingsUnlock() {
   if (settingsSession && (!/^[a-f0-9]{64}$/.test(settingsSession.token)
     || !Number.isFinite(settingsSession.expiresAt) || settingsSession.expiresAt <= Date.now())) clearSettingsSession();
   $("settings-credentials").hidden = !!settingsSession;
   $("settings-unlocked").hidden = !settingsSession;
+  $("intent-wrap").hidden = !settingsSession;
 }
 
 function clearSettingsSession() {

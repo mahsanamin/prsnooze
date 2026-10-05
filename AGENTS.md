@@ -143,6 +143,14 @@ control a security surface, not a convenience feature.
 - Settings unlock tokens are settings-only, random, revocable, bounded in
   memory, and expire after 8 hours without sliding renewal. Never persist the
   password in the browser or accept a settings token on the approval route.
+- A review focus (`intent` on `POST /api/review`) is the owner's steer for one
+  review and needs a live settings session, checked before anything is queued.
+  That is the only place outside `/api/settings` that accepts the settings
+  token, and it still never authorises approval. A review without a focus stays
+  open. The remote API does not accept a focus. In the prompt the focus ranks
+  below the project skill, the developer layer, the approval policy and the
+  floor: it can direct attention, never drop a check, lower a severity, or ask
+  for an approval.
 - Browser and remote submissions, including resume, must pass one shared
   server-side admission policy. A disabled browser button is only presentation.
 - Locking intake or lowering concurrency never cancels queued or running work.

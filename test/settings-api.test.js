@@ -111,6 +111,48 @@ test("settings login grants a settings-only session and logout revokes it", asyn
   assert.equal(denied.status, 401);
 });
 
+test("only the owner's settings session may attach a review focus", async () => {
+  // Intake is locked so a request that passes the owner check stops at
+  // admission (423) instead of starting a real review.
+  assert.equal((await save({ acceptingReviews: false, disabledProviders: [] })).status, 200);
+  const before = jobs.size;
+  const submit = (body, token) => fetch(`${base}/api/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ prUrl: "https://github.com/example/repo/pull/9", ...body }),
+  });
+
+  let response = await submit({ intent: "focus on the migration" });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).code, "OWNER_SESSION_REQUIRED");
+  response = await submit({ intent: "focus on the migration" }, "a".repeat(64));
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).code, "OWNER_SESSION_REQUIRED");
+
+  // A blank focus is no focus, so the anonymous path is unchanged.
+  response = await submit({ intent: "   " });
+  assert.equal((await response.json()).code, "REVIEW_INTAKE_LOCKED");
+
+  const login = await fetch(`${base}/api/settings/session`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "settings-secret" }),
+  });
+  const { token } = await login.json();
+  response = await submit({ intent: "x".repeat(2001) }, token);
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "BAD_REVIEW_INTENT");
+  response = await submit({ intent: { text: "nope" } }, token);
+  assert.equal((await response.json()).code, "BAD_REVIEW_INTENT");
+  response = await submit({ intent: "focus on the migration" }, token);
+  assert.equal(response.status, 423);
+  assert.equal((await response.json()).code, "REVIEW_INTAKE_LOCKED");
+
+  // The remote API does not take a focus at all: it is the owner's, in the page.
+  assert.equal(jobs.size, before);
+  await fetch(`${base}/api/settings/session`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+  assert.equal((await save({ acceptingReviews: true })).status, 200);
+});
+
 test("provider toggles reject new and resumed reviews on browser and remote paths", async () => {
   for (const disabledProviders of [["claude"], ["codex"], ["claude", "codex"]]) {
     assert.equal((await save({ disabledProviders })).status, 200);

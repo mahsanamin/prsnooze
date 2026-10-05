@@ -107,6 +107,12 @@
         </div>
         <button id="submit-btn" type="submit">Start review</button>
       </form>
+      <!-- Shown only while this tab holds the owner's settings session. The
+           server refuses a focus from anyone else. -->
+      <div id="intent-wrap" class="intent-wrap" hidden>
+        <label for="review-intent" class="intent-label">Review focus <span>owner only, optional</span></label>
+        <textarea id="review-intent" rows="2" maxlength="2000" placeholder="What should this review dig into? For example: check the retry logic against the old client."></textarea>
+      </div>
       <div id="submit-msg" class="submit-msg"></div>
     </div>
 

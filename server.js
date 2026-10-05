@@ -531,7 +531,23 @@ async function enforceAdmission(provider) {
   }
 }
 
-async function enqueueReview({ prUrl, provider: requested, requestedBy = null } = {}) {
+// The owner's optional steer for one review ("focus on the migration", "check
+// the retry logic against the old client"). Owner-only because it changes what
+// the review looks at, and the review posts under the host's GitHub identity.
+const REVIEW_INTENT_MAX = 2000;
+
+function normalizeReviewIntent(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") throw httpError(400, "Review focus must be text.", "BAD_REVIEW_INTENT");
+  const intent = raw.replace(/\r\n?/g, "\n").trim();
+  if (!intent) return null;
+  if (intent.length > REVIEW_INTENT_MAX) {
+    throw httpError(400, `Review focus is limited to ${REVIEW_INTENT_MAX} characters.`, "BAD_REVIEW_INTENT");
+  }
+  return intent;
+}
+
+async function enqueueReview({ prUrl, provider: requested, requestedBy = null, reviewIntent = null } = {}) {
   const provider = String(requested || DEFAULT_REVIEW_PROVIDER).toLowerCase();
   if (!prUrl) throw httpError(400, "prUrl is required");
   if (!PROVIDERS.has(provider)) {
@@ -554,6 +570,7 @@ async function enqueueReview({ prUrl, provider: requested, requestedBy = null } 
     provider,
     events: [],
     ...(requestedBy ? { requestedBy } : {}),
+    ...(reviewIntent ? { reviewIntent } : {}),
   };
   jobs.set(id, job);
   persistJob(job);
@@ -570,7 +587,18 @@ function httpError(status, message, code = undefined) {
 
 app.post("/api/review", async (req, res) => {
   try {
-    const result = await enqueueReview({ prUrl: req.body?.prUrl, provider: req.body?.provider });
+    // A review focus is the owner's. It rides on the settings session, checked
+    // before anything is queued, so an anonymous caller gets a refusal and no
+    // job. A plain review without one stays open, as it always was.
+    const reviewIntent = normalizeReviewIntent(req.body?.intent);
+    if (reviewIntent && !settingsSessions.valid(settingsToken(req))) {
+      res.set("Cache-Control", "no-store");
+      return res.status(401).json({
+        error: "Only the instance owner can add a review focus. Unlock settings in this tab, then submit again.",
+        code: "OWNER_SESSION_REQUIRED",
+      });
+    }
+    const result = await enqueueReview({ prUrl: req.body?.prUrl, provider: req.body?.provider, reviewIntent });
     res.status(202).json(result);
   } catch (e) {
     res.status(e.status || 400).json({ error: e.message, code: e.code });
@@ -599,6 +627,7 @@ function jobListItem(j) {
     error: j.error,
     requestedBy: j.requestedBy || null,
     lastResumeRequestedBy: j.lastResumeRequestedBy || null,
+    reviewIntent: j.reviewIntent || null,
   };
 }
 function jobsSnapshot() {

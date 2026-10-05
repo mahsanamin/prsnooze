@@ -363,6 +363,17 @@ body::after {
 #submit-btn:active { transform: translateY(1px); }
 #submit-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.4); box-shadow: none; }
 
+.intent-wrap { display: flex; flex-direction: column; gap: 5px; padding: 2px 20px 0; }
+.intent-wrap[hidden] { display: none; }
+.intent-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.intent-label span { font-weight: 400; color: var(--faint); margin-left: 6px; }
+.intent-wrap textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px;
+  padding: 9px 12px; border: 1px solid var(--border-2); border-radius: 10px;
+  background: rgba(8, 9, 13, 0.66); color: var(--text);
+  font: inherit; font-size: 13px; line-height: 1.45;
+}
+.intent-wrap textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .submit-msg { flex: 0 0 auto; font-size: 12.5px; color: var(--muted); padding: 0 20px; min-height: 0; }
 .submit-msg:not(:empty) { padding: 4px 20px 0; }
 .submit-msg.error { color: var(--red); }
