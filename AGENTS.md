@@ -159,6 +159,12 @@ control a security surface, not a convenience feature.
   on a public repo it is what stops a stranger spending the host's plan and
   posting under the host's identity. It queues through `enqueueReview`, never
   around admission, and turning it on must not reach back into old mentions.
+- Auto-resume (`lib/auto-resume.js`) is off by default and only the settings
+  session can turn it on or run it. New commits since the review are its only
+  trigger; a reply alone stays a manual resume. It resumes through
+  `resumeReviewJob`, never around the resume gate or admission, and it follows
+  up each pushed head once (`autoResumedAtSha`) so a review cannot resume on
+  every check.
 - Browser and remote submissions, including resume, must pass one shared
   server-side admission policy. A disabled browser button is only presentation.
 - Locking intake or lowering concurrency never cancels queued or running work.

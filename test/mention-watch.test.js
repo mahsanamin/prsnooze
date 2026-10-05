@@ -158,7 +158,8 @@ test("mention matching is a whole login, case-insensitive", () => {
 });
 
 test("settings default the watch off and keep the interval in range", () => {
-  assert.deepEqual(normalizeSettings({}).mentionWatch, { enabled: false, intervalMinutes: 30 });
+  assert.deepEqual(normalizeSettings({}).mentionWatch, { enabled: false, intervalMinutes: 5 });
+  assert.deepEqual(normalizeSettings({}).autoResume, { enabled: false, intervalMinutes: 5 });
   assert.equal(normalizeSettings({ mentionWatch: { enabled: true, intervalMinutes: 1 } }).mentionWatch.intervalMinutes, 5);
   assert.equal(normalizeSettings({ mentionWatch: { intervalMinutes: 9999 } }).mentionWatch.intervalMinutes, 240);
   assert.equal(normalizeSettings({ mentionWatch: { enabled: "yes" } }).mentionWatch.enabled, false);

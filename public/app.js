@@ -33,6 +33,9 @@ const settingUsageFloor = $("setting-usage-floor");
 const settingMentionWatch = $("setting-mention-watch");
 const settingMentionInterval = $("setting-mention-interval");
 let mentionWatch = null;
+const settingAutoResume = $("setting-auto-resume");
+const settingAutoResumeInterval = $("setting-auto-resume-interval");
+let autoResume = null;
 const notifyToggle = $("notify-toggle");
 const queueStatusEl = $("queue-status");
 const welcomeBanner = $("welcome-banner");
@@ -1390,60 +1393,78 @@ function setImageWithFallback(img, container, url) {
 }
 
 // "Last checked 10:30, queued 1 review. Next check 11:00." in plain words.
-function renderMentionWatchStatus() {
-  const el = $("mention-watch-status");
-  if (!el) return;
-  const st = mentionWatch?.status || {};
-  const login = st.login || hostLogin;
-  const who = $("mention-watch-who");
-  if (who && login) who.textContent = `Checks open PRs for comments that mention @${login}. Reviews post as @${login} and use this host's plan.`;
+// Shared by the two background checks; `done` is how one run's work is counted.
+function backgroundStatusText(task, { listKey, noun }) {
+  const st = task?.status || {};
   const time = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const parts = [];
-  if (!mentionWatch?.enabled) parts.push("Off.");
+  if (!task?.enabled) parts.push("Off.");
   if (st.lastRunAt) {
-    const recent = (st.lastQueued || []).filter((q) => q.at === st.lastRunAt).length;
-    parts.push(`Last checked ${time(st.lastRunAt)}, queued ${recent} review${recent === 1 ? "" : "s"}.`);
-  } else if (mentionWatch?.enabled) {
+    const count = (st[listKey] || []).filter((item) => item.at === st.lastRunAt).length;
+    parts.push(`Last checked ${time(st.lastRunAt)}, ${noun} ${count} review${count === 1 ? "" : "s"}.`);
+  } else if (task?.enabled) {
     parts.push("Not checked yet.");
   }
-  if (mentionWatch?.enabled && st.nextRunAt) parts.push(`Next check ${time(st.nextRunAt)}.`);
+  if (task?.enabled && st.nextRunAt) parts.push(`Next check ${time(st.nextRunAt)}.`);
   if (st.lastError) parts.push(st.lastError);
-  el.textContent = parts.join(" ");
-  el.classList.toggle("error", !!st.lastError);
+  return { text: parts.join(" "), error: !!st.lastError };
 }
 
-$("mention-watch-run")?.addEventListener("click", async () => {
-  updateSettingsUnlock();
-  if (!settingsSession) return settingsFail("Unlock settings first: enter the settings password and save.");
-  const button = $("mention-watch-run");
-  button.disabled = true;
-  button.textContent = "Checking…";
-  try {
-    const r = await fetch("/api/settings/mention-watch/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${settingsSession.token}` },
-      body: "{}",
-    });
-    const data = await r.json();
-    if (r.status === 401) {
-      clearSettingsSession();
-      updateSettingsUnlock();
-      throw new Error("Settings session expired or the server restarted. Enter the settings password again.");
-    }
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-    mentionWatch = { ...mentionWatch, status: data.status };
-    renderMentionWatchStatus();
-    refreshList();
-  } catch (error) {
-    settingsFail(error.message);
-  } finally {
-    button.disabled = false;
-    button.textContent = "Check now";
+function renderBackgroundStatus() {
+  const login = mentionWatch?.status?.login || hostLogin;
+  const who = $("mention-watch-who");
+  if (who && login) who.textContent = `Checks open PRs for comments that mention @${login}. Reviews post as @${login} and use this host's plan.`;
+  for (const [id, task, opts] of [
+    ["mention-watch-status", mentionWatch, { listKey: "lastQueued", noun: "queued" }],
+    ["auto-resume-status", autoResume, { listKey: "lastResumed", noun: "resumed" }],
+  ]) {
+    const el = $(id);
+    if (!el) continue;
+    const { text, error } = backgroundStatusText(task, opts);
+    el.textContent = text;
+    el.classList.toggle("error", error);
   }
-});
+}
+
+// "Check now" for either background check. Settings-session only.
+function wireCheckNow(buttonId, route, apply) {
+  $(buttonId)?.addEventListener("click", async () => {
+    updateSettingsUnlock();
+    if (!settingsSession) return settingsFail("Unlock settings first: enter the settings password and save.");
+    const button = $(buttonId);
+    button.disabled = true;
+    button.textContent = "Checking…";
+    try {
+      const r = await fetch(route, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${settingsSession.token}` },
+        body: "{}",
+      });
+      const data = await r.json();
+      if (r.status === 401) {
+        clearSettingsSession();
+        updateSettingsUnlock();
+        throw new Error("Settings session expired or the server restarted. Enter the settings password again.");
+      }
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      apply(data.status);
+      renderBackgroundStatus();
+      refreshList();
+    } catch (error) {
+      settingsFail(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Check now";
+    }
+  });
+}
+wireCheckNow("mention-watch-run", "/api/settings/mention-watch/run", (status) => { mentionWatch = { ...mentionWatch, status }; });
+wireCheckNow("auto-resume-run", "/api/settings/auto-resume/run", (status) => { autoResume = { ...autoResume, status }; });
 
 function applyPublicSettings(data) {
-  if (data?.mentionWatch) { mentionWatch = data.mentionWatch; renderMentionWatchStatus(); }
+  if (data?.mentionWatch) mentionWatch = data.mentionWatch;
+  if (data?.autoResume) autoResume = data.autoResume;
+  if (data?.mentionWatch || data?.autoResume) renderBackgroundStatus();
   if (data?.admission) instanceSettings = data.admission;
   if (data?.profile) instanceProfile = data.profile;
   if (!instanceSettings || !instanceProfile) return;
@@ -1505,6 +1526,13 @@ function renderAvatarChoices() {
   }));
 }
 
+// The menus offer common values; a value saved another way is added so it shows.
+function setIntervalSelect(select, minutes) {
+  const value = String(minutes || 5);
+  if (![...select.options].some((o) => o.value === value)) select.add(new Option(`${value} minutes`, value));
+  select.value = value;
+}
+
 async function openSettings() {
   if (!settingsBackdrop) return;
   updateSettingsUnlock();
@@ -1512,7 +1540,7 @@ async function openSettings() {
   settingsPassword.value = "";
   settingsError.textContent = "Loading settings…";
   settingsError.hidden = false;
-  const controls = [settingAccepting, settingConcurrency, settingUsageFloor, settingMentionWatch, settingMentionInterval,
+  const controls = [settingAccepting, settingConcurrency, settingUsageFloor, settingMentionWatch, settingMentionInterval, settingAutoResume, settingAutoResumeInterval,
     avatarUploadButton, settingsPassword, settingsSave];
   controls.forEach((control) => { control.disabled = true; });
   avatarGrid.replaceChildren();
@@ -1548,9 +1576,9 @@ async function openSettings() {
   settingConcurrency.value = String(instanceSettings.maxConcurrentReviews || 1);
   settingUsageFloor.value = String(instanceSettings.minUsageRemainingPct || 0);
   settingMentionWatch.checked = !!mentionWatch?.enabled;
-  const interval = String(mentionWatch?.intervalMinutes || 30);
-  if (![...settingMentionInterval.options].some((o) => o.value === interval)) settingMentionInterval.add(new Option(`${interval} minutes`, interval));
-  settingMentionInterval.value = interval;
+  setIntervalSelect(settingMentionInterval, mentionWatch?.intervalMinutes);
+  settingAutoResume.checked = !!autoResume?.enabled;
+  setIntervalSelect(settingAutoResumeInterval, autoResume?.intervalMinutes);
   settingsPassword.value = "";
   settingsError.hidden = true;
   setImageWithFallback(settingsAvatarPreview, settingsAvatarPreview?.parentElement, instanceProfile.avatarUrl);
@@ -1668,6 +1696,7 @@ settingsForm?.addEventListener("submit", async (event) => {
         avatarId: selectedAvatarId,
         avatarDataUrl: pendingAvatarDataUrl,
         mentionWatch: { enabled: settingMentionWatch.checked, intervalMinutes: Number(settingMentionInterval.value) },
+        autoResume: { enabled: settingAutoResume.checked, intervalMinutes: Number(settingAutoResumeInterval.value) },
       }),
     });
     const data = await response.json();

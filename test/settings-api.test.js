@@ -172,6 +172,22 @@ test("the mention watch is a settings-only control", async () => {
   assert.equal(config.mentionWatch.intervalMinutes, 60);
 });
 
+test("auto-resume is a settings-only control", async () => {
+  const anonymous = await fetch(`${base}/api/settings/auto-resume/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(anonymous.status, 401);
+  const off = await fetch(`${base}/api/settings/auto-resume/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "settings-secret" }) });
+  assert.equal(off.status, 409);
+  assert.equal((await off.json()).code, "AUTO_RESUME_OFF");
+  const saved = await save({ autoResume: { enabled: false, intervalMinutes: 10 } });
+  assert.equal(saved.status, 200);
+  const body = await saved.json();
+  assert.equal(body.autoResume.intervalMinutes, 10);
+  assert.ok(body.autoResume.status);
+});
+
 test("provider toggles reject new and resumed reviews on browser and remote paths", async () => {
   for (const disabledProviders of [["claude"], ["codex"], ["claude", "codex"]]) {
     assert.equal((await save({ disabledProviders })).status, 200);

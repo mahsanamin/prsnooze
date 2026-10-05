@@ -235,16 +235,40 @@
           <label class="setting-row setting-select-row">
             <span><b>Check every</b><small>Only new comments since the watch was turned on count.</small></span>
             <select id="setting-mention-interval">
+              <option value="5">5 minutes</option>
+              <option value="10">10 minutes</option>
               <option value="15">15 minutes</option>
               <option value="30">30 minutes</option>
               <option value="60">1 hour</option>
-              <option value="120">2 hours</option>
             </select>
           </label>
           <div class="settings-help">Only a comment mention counts, from the repo's owner, an org member or a collaborator. Mentions in the PR description, review requests and assignments are ignored. New reviews still follow the intake and usage settings above.</div>
           <div class="mention-status-row">
             <span id="mention-watch-status" class="settings-help"></span>
             <button id="mention-watch-run" type="button" class="modal-cancel">Check now</button>
+          </div>
+        </section>
+
+        <section class="settings-section settings-controls">
+          <div class="settings-section-title">Follow-up reviews</div>
+          <label class="setting-row">
+            <span><b>Re-check my reviews when the author pushes</b><small>Resumes the earlier review session to see whether its comments were addressed.</small></span>
+            <input id="setting-auto-resume" type="checkbox" />
+          </label>
+          <label class="setting-row setting-select-row">
+            <span><b>Check every</b><small>Looks at this host's reviews from the last 14 days.</small></span>
+            <select id="setting-auto-resume-interval">
+              <option value="5">5 minutes</option>
+              <option value="10">10 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour</option>
+            </select>
+          </label>
+          <div class="settings-help">Only new commits count. A reply without a push is left for you to resume by hand. Approved, merged and closed PRs are skipped, and each pushed commit is followed up once. Resumes still follow the intake and usage settings above.</div>
+          <div class="mention-status-row">
+            <span id="auto-resume-status" class="settings-help"></span>
+            <button id="auto-resume-run" type="button" class="modal-cancel">Check now</button>
           </div>
         </section>
 

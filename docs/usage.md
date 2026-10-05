@@ -192,7 +192,7 @@ How it is used:
 
 ### Review PRs where you're mentioned
 
-The owner can have PRSnooze watch GitHub for PR comments that @mention the host's `gh` account, and queue a review for each one. Turn it on in settings under **GitHub mentions**, pick how often to check (30 minutes by default), and save. **Check now** runs one check straight away.
+The owner can have PRSnooze watch GitHub for PR comments that @mention the host's `gh` account, and queue a review for each one. Turn it on in settings under **GitHub mentions**, pick how often to check (5 minutes by default, up to 1 hour), and save. **Check now** runs one check straight away.
 
 What counts as a trigger:
 
@@ -207,6 +207,17 @@ What happens next:
 - The review shows who asked, with a link to the comment. The settings panel shows when the last check ran, how many reviews it queued, when the next one is due, and any error, such as `gh` not being signed in.
 
 Handled comments are remembered in `mention-watch.json` under the data home, so a restart does not review the same mention twice.
+
+### Re-check a review when the author pushes
+
+The owner can have PRSnooze follow up on its own reviews. Turn on **Re-check my reviews when the author pushes** in settings under **Follow-up reviews**, pick how often to check (5 minutes by default, up to 1 hour), and save. **Check now** runs one check straight away.
+
+On each check it looks at this host's reviews from the last 14 days, the newest review per PR, where the review left something to fix (it commented or requested changes). For each one it asks GitHub whether the PR has new commits since that review. If it does, it resumes the review's original session, the same as clicking **Review PR** on it, so the agent checks whether its comments were addressed.
+
+- New commits are the only trigger. A reply on the PR without a push is left for you to resume by hand.
+- The normal resume rules decide. Approved, merged and closed PRs are skipped, a review with no saved session is skipped, and intake lock, provider switches and the usage floor still apply. A refused resume is tried again on the next check.
+- Each pushed commit is followed up once. If the author pushes again later, it follows up again.
+- The resumed review shows that auto-resume asked for it. The settings panel shows when the last check ran, how many reviews it resumed, when the next one is due, and any error.
 
 Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](provider-adapters.md).
 

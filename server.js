@@ -27,6 +27,7 @@ const {
   saveSettings,
 } = require("./lib/instance-settings");
 const { createMentionWatcher } = require("./lib/mention-watch");
+const { createAutoResumer } = require("./lib/auto-resume");
 const { isFableModel, tightestUsageWindow } = require("./lib/admission-policy");
 
 // --- env ---
@@ -145,6 +146,20 @@ const mentionWatcher = createMentionWatcher({
   log: (message) => console.log(message),
 });
 
+// Owner-enabled follow-up: when the author pushes after one of this host's
+// reviews, resume that review through resumeReviewJob, the same path and gate
+// as the Review PR button.
+const autoResumer = createAutoResumer({
+  listJobs: () => Array.from(jobs.values()),
+  hasSession: (job) => !!reviewSessionId(job),
+  prState: (prUrl) => prStateStore.get(prUrl),
+  assess: (job) => assessJobResume(job),
+  resume: (jobId, options) => resumeReviewJob(jobId, options),
+  persist: (job) => persistJob(job),
+  onChange: () => broadcastSettings(),
+  log: (message) => console.log(message),
+});
+
 function normalizedPrUrl(url) {
   try { return parsePrUrl(url).url.toLowerCase(); } catch { return String(url || "").toLowerCase(); }
 }
@@ -154,6 +169,7 @@ function normalizedPrUrl(url) {
 function settingsPayload() {
   const payload = publicSettings(runtimeSettings);
   payload.mentionWatch = { ...payload.mentionWatch, status: mentionWatcher.status() };
+  payload.autoResume = { ...payload.autoResume, status: autoResumer.status() };
   return payload;
 }
 
@@ -460,7 +476,7 @@ const settingsToken = (req) => /^Bearer ([a-f0-9]{64})$/.exec(req.get("Authoriza
 
 async function authorizeSettings(req, res, next) {
   res.set("Cache-Control", "no-store");
-  if (["/api/settings", "/api/settings/mention-watch/run"].includes(req.path)
+  if (["/api/settings", "/api/settings/mention-watch/run", "/api/settings/auto-resume/run"].includes(req.path)
     && settingsSessions.valid(settingsToken(req))) return next();
   const source = req.ip || req.socket.remoteAddress || "unknown";
   const throttled = settingsLimiter.check(source);
@@ -503,6 +519,9 @@ app.post("/api/settings", authorizeSettings, async (req, res) => {
         mentionWatch: req.body?.mentionWatch && typeof req.body.mentionWatch === "object"
           ? { ...runtimeSettings.mentionWatch, ...req.body.mentionWatch }
           : runtimeSettings.mentionWatch,
+        autoResume: req.body?.autoResume && typeof req.body.autoResume === "object"
+          ? { ...runtimeSettings.autoResume, ...req.body.autoResume }
+          : runtimeSettings.autoResume,
       },
       { instanceId: IDENTITY.id, initialConcurrency: MAX_CONCURRENT_REVIEWS },
     );
@@ -514,6 +533,7 @@ app.post("/api/settings", authorizeSettings, async (req, res) => {
     runtimeSettings = next;
     queue.setConcurrency(next.maxConcurrentReviews);
     mentionWatcher.configure({ ...next.mentionWatch, resetClock: watchTurnedOn });
+    autoResumer.configure(next.autoResume);
     broadcastSettings();
     res.json(settingsPayload());
   } catch (error) {
@@ -528,6 +548,15 @@ app.post("/api/settings/mention-watch/run", authorizeSettings, async (_req, res)
   }
   const result = await mentionWatcher.pollOnce();
   res.json({ queued: result?.queued || [], status: mentionWatcher.status() });
+});
+
+// "Check now" for auto-resume. Settings-only, like the toggle itself.
+app.post("/api/settings/auto-resume/run", authorizeSettings, async (_req, res) => {
+  if (!runtimeSettings.autoResume.enabled) {
+    return res.status(409).json({ error: "Turn on auto-resume and save before checking.", code: "AUTO_RESUME_OFF" });
+  }
+  const result = await autoResumer.pollOnce();
+  res.json({ resumed: result?.resumed || [], status: autoResumer.status() });
 });
 
 // Queue one review. Shared by the browser route and the remote API so the two
@@ -1130,6 +1159,8 @@ function start(port = PORT, { banner = false } = {}) {
   server.once("close", () => clearInterval(statusRefreshTimer));
   mentionWatcher.configure(runtimeSettings.mentionWatch);
   server.once("close", () => mentionWatcher.stop());
+  autoResumer.configure(runtimeSettings.autoResume);
+  server.once("close", () => autoResumer.stop());
   server.listen(port, "0.0.0.0", () => {
     const addr = server.address();
     console.log(`prsnooze listening on http://0.0.0.0:${addr.port}`);
@@ -1150,6 +1181,7 @@ function start(port = PORT, { banner = false } = {}) {
       console.log("  Fable reviews: blocked");
       console.log(`  approve password: ${APPROVE_PASSWORD ? "set" : "not set — every approval comes back unauthorized"}`);
       console.log(`  settings password: ${SETTINGS_PASSWORD ? "set" : "not set — settings are read-only"}`);
+      console.log(`  auto-resume on push: ${runtimeSettings.autoResume.enabled ? `every ${runtimeSettings.autoResume.intervalMinutes} min` : "off"}`);
       console.log(`  mention watch: ${runtimeSettings.mentionWatch.enabled ? `every ${runtimeSettings.mentionWatch.intervalMinutes} min` : "off"}`);
     }
   });
