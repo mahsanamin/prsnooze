@@ -301,6 +301,21 @@ function findVerifiable(raw) {
   return best;
 }
 
+// Which review a message from this panel goes into. Its own session when it
+// has one; otherwise (a skipped or failed run, often one the mention watch
+// started) the newest finished review of the same PR that does.
+function messageTarget(rev) {
+  if (rev.sessionId || rev.hasSession) return rev;
+  const target = normUrl(rev.prUrl);
+  let best = null;
+  for (const other of reviews.values()) {
+    if (other.id === rev.id || other.state !== "done" || !(other.sessionId || other.hasSession)) continue;
+    if (normUrl(other.prUrl) !== target) continue;
+    if (!best || (other.finishedAt || 0) > (best.finishedAt || 0)) best = other;
+  }
+  return best;
+}
+
 function upsertReview(data) {
   let rev = reviews.get(data.id);
   if (!rev) {
@@ -326,6 +341,7 @@ function upsertReview(data) {
   if (data.skipReason) rev.skipReason = data.skipReason;
   if (data.skipMessage) rev.skipMessage = data.skipMessage;
   if (data.skipped) rev.skipped = true;
+  if (data.hasSession) rev.hasSession = true;
   if (data.prMeta && !rev.prMeta) rev.prMeta = data.prMeta;
   else if (data.nameWithOwner && !rev.prMeta) rev.prMeta = { nameWithOwner: data.nameWithOwner, number: data.number, title: data.title };
   if (data.requestedBy) rev.requestedBy = data.requestedBy;
@@ -832,17 +848,6 @@ function renderHead(rev) {
           : "Run this review again, continuing the original session";
       head.appendChild(b);
 
-      // The owner's follow-up message, sent into this same session. Shown to
-      // everyone like Approve; the dialog asks for the settings password unless
-      // this tab already holds the settings session.
-      const m = document.createElement("button");
-      m.className = "resume message";
-      m.dataset.messageId = rev.id;
-      m.appendChild(iconEl("send"));
-      m.appendChild(document.createTextNode("Send message"));
-      m.title = "Owner only: resume this review with a message, e.g. approve if everything is fixed";
-      head.appendChild(m);
-
       // Force only appears once a real attempt has been refused.
       if (rev.resumeArmed) {
         const state = String(a?.signals?.prState || "").toUpperCase();
@@ -868,6 +873,24 @@ function renderHead(rev) {
         why.textContent = a.reason;
         head.appendChild(why);
       }
+    }
+    // The owner's follow-up message. Shown to everyone like Approve; the dialog
+    // asks for the settings password unless this tab holds the settings
+    // session. Hidden once GitHub says the PR is merged or closed, because the
+    // server would refuse it.
+    const target = messageTarget(rev);
+    const prDone = rev.prState === "MERGED" || rev.prState === "CLOSED";
+    if (target && !prDone) {
+      const m = document.createElement("button");
+      m.className = "resume message";
+      m.dataset.messageId = target.id;
+      if (target.id !== rev.id) m.dataset.fromId = rev.id;
+      m.appendChild(iconEl("send"));
+      m.appendChild(document.createTextNode("Send message"));
+      m.title = target.id === rev.id
+        ? "Owner only: resume this review with a message, e.g. approve if everything is fixed"
+        : "Owner only: this run has no session of its own, so the message continues the earlier review of this PR";
+      head.appendChild(m);
     }
   }
   renderPrLine(rev);
@@ -1185,7 +1208,7 @@ panels.addEventListener("click", (e) => {
   const ap = e.target.closest(".approve");
   if (ap && ap.dataset.id && !ap.disabled) { openConfirm(ap.dataset.id); return; }
   const mb = e.target.closest(".resume.message");
-  if (mb && mb.dataset.messageId) { openMessage(mb.dataset.messageId); return; }
+  if (mb && mb.dataset.messageId) { openMessage(mb.dataset.messageId, mb.dataset.fromId || null); return; }
   const fr = e.target.closest(".resume.force");
   if (fr && fr.dataset.forceId && !fr.disabled) { verifyReview(fr.dataset.forceId, true); return; }
   const rs = e.target.closest(".resume");
@@ -1228,14 +1251,18 @@ function closeConfirm({ keep = false } = {}) {
 
 // ---------------------------------------------------- owner's message -----
 let pendingMessage = null;
-function openMessage(id) {
+function openMessage(id, fromId = null) {
   const rev = reviews.get(id);
   if (!rev) return;
   updateSettingsUnlock();
   pendingMessage = id;
   const num = rev.prMeta?.number || prNumberFromUrl(rev.prUrl);
   const where = rev.prMeta?.nameWithOwner ? `${rev.prMeta.nameWithOwner}#${num}` : (num ? `PR #${num}` : "this PR");
-  $("msg-sub").textContent = `Resumes the review of ${where} in its original session with your message.${hostLogin ? ` Anything it posts is posted as @${hostLogin}.` : ""}`;
+  const earlier = fromId && rev.finishedAt ? ` from ${new Date(rev.finishedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}` : "";
+  $("msg-sub").textContent = (fromId
+    ? `This run has no session of its own, so your message continues the earlier review of ${where}${earlier}.`
+    : `Resumes the review of ${where} in its original session with your message.`)
+    + (hostLogin ? ` Anything it posts is posted as @${hostLogin}.` : "");
   $("msg-input").value = "";
   $("msg-password").value = "";
   $("msg-password-row").hidden = !!settingsSession;

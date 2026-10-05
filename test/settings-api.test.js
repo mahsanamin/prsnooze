@@ -358,3 +358,18 @@ test("only the owner can send a follow-up message into a review session", async 
   await fetch(`${base}/api/settings/session`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
   assert.equal((await save({ acceptingReviews: true })).status, 200);
 });
+
+test("the job list says whether a review has a session, without the session id", async () => {
+  jobs.set("with-session", { id: "with-session", provider: "claude", summary: { sessionId: "secret-session" },
+    prUrl: "https://github.com/example/repo/pull/1", state: "done", events: [], createdAt: Date.now() });
+  jobs.set("skipped-run", { id: "skipped-run", provider: "claude", skipped: true,
+    prUrl: "https://github.com/example/repo/pull/1", state: "done", events: [], createdAt: Date.now() });
+  const response = await fetch(`${base}/api/jobs`);
+  const text = await response.text();
+  const list = JSON.parse(text).jobs;
+  assert.equal(list.find((j) => j.id === "with-session").hasSession, true);
+  assert.equal(list.find((j) => j.id === "skipped-run").hasSession, false);
+  assert.equal(text.includes("secret-session"), false);
+  jobs.delete("with-session");
+  jobs.delete("skipped-run");
+});

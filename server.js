@@ -706,6 +706,9 @@ function jobListItem(j) {
     requestedBy: j.requestedBy || null,
     lastResumeRequestedBy: j.lastResumeRequestedBy || null,
     reviewIntent: j.reviewIntent || null,
+    // Whether a provider session exists, without exposing its id. The page uses
+    // it to offer Send message before a review's full detail has loaded.
+    hasSession: !!reviewSessionId(j),
   };
 }
 function jobsSnapshot() {
