@@ -23,6 +23,7 @@ your own server or install either AI provider for that.
 - **Follow the review live.** See commands, findings, and the final result in the browser.
 - **Continue after fixes.** Resume a saved review with the same provider and session.
 - **Use your project's rules.** PRSnooze reads repository review skills and guidance, with a bundled fallback when none exists.
+- **Get reviews by being mentioned.** Turn on the mention watch in settings and PRSnooze reviews PRs where a teammate @mentions you in a comment, checking every 30 minutes by default.
 - **Point a review at what worries you.** The instance owner can add a review focus, such as "check the migration rollback", when starting a review.
 - **Control your server.** Set a profile picture, enable or disable providers, pause new work, and choose one to four simultaneous reviews.
 
@@ -225,6 +226,10 @@ the detected model is Fable.
 While settings are unlocked in a tab, a **Review focus** box appears under the
 PR field. Use it to tell the review what to dig into. Only the owner's unlocked
 session can send one; see [review focus](docs/usage.md#tell-a-review-what-to-look-at).
+
+The **GitHub mentions** section turns on a timed check (every 15 minutes to
+2 hours) for PR comments that @mention the host's `gh` account, and queues a
+review for each new one. See [mention watch](docs/usage.md#review-prs-where-youre-mentioned).
 
 Manual PR approval uses a **different** password, `MANUAL_APPROVE_PASSWORD`,
 and still refuses unresolved blocking findings. Neither password is a general

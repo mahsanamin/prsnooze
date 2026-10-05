@@ -226,6 +226,28 @@
           </label>
         </section>
 
+        <section class="settings-section settings-controls">
+          <div class="settings-section-title">GitHub mentions</div>
+          <label class="setting-row">
+            <span><b>Review PRs where I'm mentioned</b><small id="mention-watch-who">Checks open PRs for comments that @mention this host's GitHub account.</small></span>
+            <input id="setting-mention-watch" type="checkbox" />
+          </label>
+          <label class="setting-row setting-select-row">
+            <span><b>Check every</b><small>Only new comments since the watch was turned on count.</small></span>
+            <select id="setting-mention-interval">
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour</option>
+              <option value="120">2 hours</option>
+            </select>
+          </label>
+          <div class="settings-help">Only a comment mention counts, from the repo's owner, an org member or a collaborator. Mentions in the PR description, review requests and assignments are ignored. New reviews still follow the intake and usage settings above.</div>
+          <div class="mention-status-row">
+            <span id="mention-watch-status" class="settings-help"></span>
+            <button id="mention-watch-run" type="button" class="modal-cancel">Check now</button>
+          </div>
+        </section>
+
         <div id="settings-credentials">
         <label class="settings-password-label" for="settings-password">Settings password</label>
         <div class="modal-field">

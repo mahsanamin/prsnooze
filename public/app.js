@@ -30,6 +30,9 @@ const avatarAttribution = $("avatar-attribution");
 const settingAccepting = $("setting-accepting");
 const settingConcurrency = $("setting-concurrency");
 const settingUsageFloor = $("setting-usage-floor");
+const settingMentionWatch = $("setting-mention-watch");
+const settingMentionInterval = $("setting-mention-interval");
+let mentionWatch = null;
 const notifyToggle = $("notify-toggle");
 const queueStatusEl = $("queue-status");
 const welcomeBanner = $("welcome-banner");
@@ -1386,7 +1389,61 @@ function setImageWithFallback(img, container, url) {
   img.src = url || "";
 }
 
+// "Last checked 10:30, queued 1 review. Next check 11:00." in plain words.
+function renderMentionWatchStatus() {
+  const el = $("mention-watch-status");
+  if (!el) return;
+  const st = mentionWatch?.status || {};
+  const login = st.login || hostLogin;
+  const who = $("mention-watch-who");
+  if (who && login) who.textContent = `Checks open PRs for comments that mention @${login}. Reviews post as @${login} and use this host's plan.`;
+  const time = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const parts = [];
+  if (!mentionWatch?.enabled) parts.push("Off.");
+  if (st.lastRunAt) {
+    const recent = (st.lastQueued || []).filter((q) => q.at === st.lastRunAt).length;
+    parts.push(`Last checked ${time(st.lastRunAt)}, queued ${recent} review${recent === 1 ? "" : "s"}.`);
+  } else if (mentionWatch?.enabled) {
+    parts.push("Not checked yet.");
+  }
+  if (mentionWatch?.enabled && st.nextRunAt) parts.push(`Next check ${time(st.nextRunAt)}.`);
+  if (st.lastError) parts.push(st.lastError);
+  el.textContent = parts.join(" ");
+  el.classList.toggle("error", !!st.lastError);
+}
+
+$("mention-watch-run")?.addEventListener("click", async () => {
+  updateSettingsUnlock();
+  if (!settingsSession) return settingsFail("Unlock settings first: enter the settings password and save.");
+  const button = $("mention-watch-run");
+  button.disabled = true;
+  button.textContent = "Checking…";
+  try {
+    const r = await fetch("/api/settings/mention-watch/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${settingsSession.token}` },
+      body: "{}",
+    });
+    const data = await r.json();
+    if (r.status === 401) {
+      clearSettingsSession();
+      updateSettingsUnlock();
+      throw new Error("Settings session expired or the server restarted. Enter the settings password again.");
+    }
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    mentionWatch = { ...mentionWatch, status: data.status };
+    renderMentionWatchStatus();
+    refreshList();
+  } catch (error) {
+    settingsFail(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Check now";
+  }
+});
+
 function applyPublicSettings(data) {
+  if (data?.mentionWatch) { mentionWatch = data.mentionWatch; renderMentionWatchStatus(); }
   if (data?.admission) instanceSettings = data.admission;
   if (data?.profile) instanceProfile = data.profile;
   if (!instanceSettings || !instanceProfile) return;
@@ -1455,7 +1512,7 @@ async function openSettings() {
   settingsPassword.value = "";
   settingsError.textContent = "Loading settings…";
   settingsError.hidden = false;
-  const controls = [settingAccepting, settingConcurrency, settingUsageFloor,
+  const controls = [settingAccepting, settingConcurrency, settingUsageFloor, settingMentionWatch, settingMentionInterval,
     avatarUploadButton, settingsPassword, settingsSave];
   controls.forEach((control) => { control.disabled = true; });
   avatarGrid.replaceChildren();
@@ -1490,6 +1547,10 @@ async function openSettings() {
   settingAccepting.checked = !!instanceSettings.acceptingReviews;
   settingConcurrency.value = String(instanceSettings.maxConcurrentReviews || 1);
   settingUsageFloor.value = String(instanceSettings.minUsageRemainingPct || 0);
+  settingMentionWatch.checked = !!mentionWatch?.enabled;
+  const interval = String(mentionWatch?.intervalMinutes || 30);
+  if (![...settingMentionInterval.options].some((o) => o.value === interval)) settingMentionInterval.add(new Option(`${interval} minutes`, interval));
+  settingMentionInterval.value = interval;
   settingsPassword.value = "";
   settingsError.hidden = true;
   setImageWithFallback(settingsAvatarPreview, settingsAvatarPreview?.parentElement, instanceProfile.avatarUrl);
@@ -1606,6 +1667,7 @@ settingsForm?.addEventListener("submit", async (event) => {
         minUsageRemainingPct: Number(settingUsageFloor.value),
         avatarId: selectedAvatarId,
         avatarDataUrl: pendingAvatarDataUrl,
+        mentionWatch: { enabled: settingMentionWatch.checked, intervalMinutes: Number(settingMentionInterval.value) },
       }),
     });
     const data = await response.json();

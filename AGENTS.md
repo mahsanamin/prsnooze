@@ -151,6 +151,14 @@ control a security surface, not a convenience feature.
   below the project skill, the developer layer, the approval policy and the
   floor: it can direct attention, never drop a check, lower a severity, or ask
   for an approval.
+- The mention watch (`lib/mention-watch.js`) is off by default and only the
+  settings session can turn it on or run it. A PR comment that @mentions the
+  host's `gh` login is the only trigger; do not add review requests,
+  assignments or PR descriptions without a deliberate decision. Keep the
+  author check (OWNER/MEMBER/COLLABORATOR only, no bots, not the host itself):
+  on a public repo it is what stops a stranger spending the host's plan and
+  posting under the host's identity. It queues through `enqueueReview`, never
+  around admission, and turning it on must not reach back into old mentions.
 - Browser and remote submissions, including resume, must pass one shared
   server-side admission policy. A disabled browser button is only presentation.
 - Locking intake or lowering concurrency never cancels queued or running work.

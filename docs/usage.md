@@ -190,6 +190,24 @@ How it is used:
 - The focus is saved on the job and shown as a log line in the review, so anyone who can open the page can read it. Do not put secrets in it. It is capped at 2000 characters.
 - Typing a focus on a PR that already has a finished review starts a fresh review instead of resuming the old session.
 
+### Review PRs where you're mentioned
+
+The owner can have PRSnooze watch GitHub for PR comments that @mention the host's `gh` account, and queue a review for each one. Turn it on in settings under **GitHub mentions**, pick how often to check (30 minutes by default), and save. **Check now** runs one check straight away.
+
+What counts as a trigger:
+
+- Only a comment on an open PR: a conversation comment, an inline review comment, or a review body. A mention in the PR description, a review request, or an assignment does nothing.
+- The comment must be new since the watch was turned on. Turning it on never reaches back into old mentions, and after the host has been off it looks back at most one day.
+- GitHub must list the comment's author as the repo's owner, a member of the owning org, or a collaborator. On a public repo, a mention from anyone else is ignored, because the review posts as the host's account and uses the host's plan. Bots and the host's own comments never count, and neither do mentions inside quoted replies or code blocks.
+
+What happens next:
+
+- The review is queued through the same path as a pasted URL, so intake lock, provider switches, the Fable block and the usage floor all apply. If one of them refuses it, the mention is tried again on later checks for up to a day.
+- If that PR is already queued or running, the mention is marked as handled and nothing new is queued. If the host already reviewed the PR's current commit, the normal "already reviewed" skip still applies.
+- The review shows who asked, with a link to the comment. The settings panel shows when the last check ran, how many reviews it queued, when the next one is due, and any error, such as `gh` not being signed in.
+
+Handled comments are remembered in `mention-watch.json` under the data home, so a restart does not review the same mention twice.
+
 Provider integrations use a small adapter contract, so adding another reviewer does not change the queue, job lifecycle, persistence, or browser. See [Provider adapters](provider-adapters.md).
 
 ## Reach your team's other instances from the terminal

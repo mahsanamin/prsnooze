@@ -26,6 +26,7 @@ const {
   saveCustomAvatar,
   saveSettings,
 } = require("./lib/instance-settings");
+const { createMentionWatcher } = require("./lib/mention-watch");
 const { isFableModel, tightestUsageWindow } = require("./lib/admission-policy");
 
 // --- env ---
@@ -128,6 +129,33 @@ let runtimeSettings = loadSettings({
 // jobs: id -> { id, prUrl, createdAt, state, events: [...], prMeta?, worktreePath?, error? }
 const jobs = new Map();
 const subscribers = new Map(); // jobId -> Set<res>
+
+// Owner-enabled poll for PR comments that @mention the host's GitHub account.
+// It queues through enqueueReview, so the admission policy is the same as for
+// a review someone pasted into the page.
+const mentionWatcher = createMentionWatcher({
+  dataHome: DATA_HOME,
+  getLogin: () => getSelfLogin(),
+  enqueue: (request) => enqueueReview(request),
+  isPrActive: (prUrl) => {
+    const target = normalizedPrUrl(prUrl);
+    return Array.from(jobs.values()).some((job) => isJobActive(job) && normalizedPrUrl(job.prUrl) === target);
+  },
+  onChange: () => broadcastSettings(),
+  log: (message) => console.log(message),
+});
+
+function normalizedPrUrl(url) {
+  try { return parsePrUrl(url).url.toLowerCase(); } catch { return String(url || "").toLowerCase(); }
+}
+
+// Everything the page and the CLI see about this host's settings, plus the
+// mention watch's last run, which lives in memory rather than settings.json.
+function settingsPayload() {
+  const payload = publicSettings(runtimeSettings);
+  payload.mentionWatch = { ...payload.mentionWatch, status: mentionWatcher.status() };
+  return payload;
+}
 
 function persistJob(job) {
   const p = path.join(JOBS_DIR, `${job.id}.json`);
@@ -328,7 +356,7 @@ app.get("/api/config", (req, res) => {
     instance: { shortId: shortId(IDENTITY.id), name: IDENTITY.name },
     remote: { tokenRequired: REMOTE_TOKEN.trim().length > 0 },
     installCommand: INSTALL_COMMAND,
-    ...publicSettings(runtimeSettings),
+    ...settingsPayload(),
     // Nothing about the approve password is reported. The button always shows
     // and always asks, so the client has no state to sync — and whether a
     // password is configured isn't the browser's business.
@@ -432,7 +460,8 @@ const settingsToken = (req) => /^Bearer ([a-f0-9]{64})$/.exec(req.get("Authoriza
 
 async function authorizeSettings(req, res, next) {
   res.set("Cache-Control", "no-store");
-  if (req.path === "/api/settings" && settingsSessions.valid(settingsToken(req))) return next();
+  if (["/api/settings", "/api/settings/mention-watch/run"].includes(req.path)
+    && settingsSessions.valid(settingsToken(req))) return next();
   const source = req.ip || req.socket.remoteAddress || "unknown";
   const throttled = settingsLimiter.check(source);
   if (throttled.blocked) {
@@ -471,6 +500,9 @@ app.post("/api/settings", authorizeSettings, async (req, res) => {
         minUsageRemainingPct: req.body?.minUsageRemainingPct ?? runtimeSettings.minUsageRemainingPct,
         maxConcurrentReviews: req.body?.maxConcurrentReviews ?? runtimeSettings.maxConcurrentReviews,
         avatar: req.body?.avatarId ? { kind: "preset", id: req.body.avatarId } : runtimeSettings.avatar,
+        mentionWatch: req.body?.mentionWatch && typeof req.body.mentionWatch === "object"
+          ? { ...runtimeSettings.mentionWatch, ...req.body.mentionWatch }
+          : runtimeSettings.mentionWatch,
       },
       { instanceId: IDENTITY.id, initialConcurrency: MAX_CONCURRENT_REVIEWS },
     );
@@ -478,13 +510,24 @@ app.post("/api/settings", authorizeSettings, async (req, res) => {
       next.avatar = saveCustomAvatar(DATA_HOME, req.body.avatarDataUrl, runtimeSettings.avatar.version);
     }
     saveSettings(DATA_HOME, next);
+    const watchTurnedOn = next.mentionWatch.enabled && !runtimeSettings.mentionWatch.enabled;
     runtimeSettings = next;
     queue.setConcurrency(next.maxConcurrentReviews);
+    mentionWatcher.configure({ ...next.mentionWatch, resetClock: watchTurnedOn });
     broadcastSettings();
-    res.json(publicSettings(runtimeSettings));
+    res.json(settingsPayload());
   } catch (error) {
     res.status(400).json({ error: error.message || "Could not save settings." });
   }
+});
+
+// "Check now" for the mention watch. Settings-only, like the toggle itself.
+app.post("/api/settings/mention-watch/run", authorizeSettings, async (_req, res) => {
+  if (!runtimeSettings.mentionWatch.enabled) {
+    return res.status(409).json({ error: "Turn on the mention watch and save before checking.", code: "MENTION_WATCH_OFF" });
+  }
+  const result = await mentionWatcher.pollOnce();
+  res.json({ queued: result?.queued || [], status: mentionWatcher.status() });
 });
 
 // Queue one review. Shared by the browser route and the remote API so the two
@@ -1019,7 +1062,7 @@ function broadcastJobs() {
 
 function broadcastSettings() {
   if (!wss) return;
-  const msg = JSON.stringify({ type: "settings", ...publicSettings(runtimeSettings) });
+  const msg = JSON.stringify({ type: "settings", ...settingsPayload() });
   for (const client of wss.clients) {
     if (client.readyState === 1 /* OPEN */) {
       try { client.send(msg); } catch {}
@@ -1059,7 +1102,7 @@ async function describeInstance({ includeUsage = false } = {}) {
     version: PKG_VERSION,
     providers: providerList.map(({ id, label }) => ({ id, label })),
     defaultProvider: DEFAULT_REVIEW_PROVIDER,
-    ...publicSettings(runtimeSettings),
+    ...settingsPayload(),
     slots: {
       capacity: q.concurrency,
       running: q.running,
@@ -1085,6 +1128,8 @@ function start(port = PORT, { banner = false } = {}) {
   const statusRefreshTimer = setInterval(() => { refreshPrStates().catch(() => {}); }, 60_000);
   statusRefreshTimer.unref();
   server.once("close", () => clearInterval(statusRefreshTimer));
+  mentionWatcher.configure(runtimeSettings.mentionWatch);
+  server.once("close", () => mentionWatcher.stop());
   server.listen(port, "0.0.0.0", () => {
     const addr = server.address();
     console.log(`prsnooze listening on http://0.0.0.0:${addr.port}`);
@@ -1105,6 +1150,7 @@ function start(port = PORT, { banner = false } = {}) {
       console.log("  Fable reviews: blocked");
       console.log(`  approve password: ${APPROVE_PASSWORD ? "set" : "not set — every approval comes back unauthorized"}`);
       console.log(`  settings password: ${SETTINGS_PASSWORD ? "set" : "not set — settings are read-only"}`);
+      console.log(`  mention watch: ${runtimeSettings.mentionWatch.enabled ? `every ${runtimeSettings.mentionWatch.intervalMinutes} min` : "off"}`);
     }
   });
   return server;

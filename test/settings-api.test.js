@@ -153,6 +153,25 @@ test("only the owner's settings session may attach a review focus", async () => 
   assert.equal((await save({ acceptingReviews: true })).status, 200);
 });
 
+test("the mention watch is a settings-only control", async () => {
+  const anonymous = await fetch(`${base}/api/settings/mention-watch/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(anonymous.status, 401);
+  const off = await fetch(`${base}/api/settings/mention-watch/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "settings-secret" }) });
+  assert.equal(off.status, 409);
+  assert.equal((await off.json()).code, "MENTION_WATCH_OFF");
+  const saved = await save({ mentionWatch: { enabled: false, intervalMinutes: 60 } });
+  assert.equal(saved.status, 200);
+  const body = await saved.json();
+  assert.equal(body.mentionWatch.enabled, false);
+  assert.equal(body.mentionWatch.intervalMinutes, 60);
+  assert.ok(body.mentionWatch.status);
+  const config = await (await fetch(`${base}/api/config`)).json();
+  assert.equal(config.mentionWatch.intervalMinutes, 60);
+});
+
 test("provider toggles reject new and resumed reviews on browser and remote paths", async () => {
   for (const disabledProviders of [["claude"], ["codex"], ["claude", "codex"]]) {
     assert.equal((await save({ disabledProviders })).status, 200);
