@@ -164,3 +164,44 @@ test("settings default the watch off and keep the interval in range", () => {
   assert.equal(normalizeSettings({ mentionWatch: { intervalMinutes: 9999 } }).mentionWatch.intervalMinutes, 240);
   assert.equal(normalizeSettings({ mentionWatch: { enabled: "yes" } }).mentionWatch.enabled, false);
 });
+
+test("a mention on a PR already reviewed resumes that review instead of starting a fresh one", async () => {
+  const dataHome = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-mentions-"));
+  const fresh = [];
+  const resumed = [];
+  let clock = T0;
+  const watcher = createMentionWatcher({
+    dataHome,
+    getLogin: async () => LOGIN,
+    enqueue: async (request) => { fresh.push(request); return { jobId: "new" }; },
+    resume: async (jobId, options) => { resumed.push({ jobId, options }); return { jobId }; },
+    findResumable: (prUrl) => (prUrl === PR ? "earlier-job" : null),
+    reader: { searchMentionedPrs: async () => [PR], commentsSince: async () => [comment({ body: `@${LOGIN} help to check again` })] },
+    now: () => clock,
+  });
+  watcher.configure({ enabled: true, intervalMinutes: 5 });
+  watcher.stop();
+  clock += 30 * 60_000;
+  await watcher.pollOnce();
+  assert.equal(fresh.length, 0);
+  assert.equal(resumed.length, 1);
+  assert.equal(resumed[0].jobId, "earlier-job");
+  assert.equal(resumed[0].options.force, true, "check again must get an answer even with no new commits");
+  assert.equal(resumed[0].options.requestedBy.source, "mention");
+  assert.equal(watcher.status().lastQueued[0].resumed, true);
+});
+
+test("without an earlier session a mention starts a fresh review", async () => {
+  const { watcher, queued, tick } = setup();
+  tick(30 * 60_000);
+  await watcher.pollOnce();
+  assert.equal(queued.length, 1);
+});
+
+test("after a restart the first mention check runs within a minute", () => {
+  const dataHome = fs.mkdtempSync(path.join(os.tmpdir(), "prsnooze-mentions-"));
+  const watcher = createMentionWatcher({ dataHome, getLogin: async () => LOGIN, enqueue: async () => ({}), now: () => T0 });
+  watcher.configure({ enabled: true, intervalMinutes: 15, startup: true });
+  assert.equal(watcher.status().nextRunAt, T0 + 60_000);
+  watcher.stop();
+});

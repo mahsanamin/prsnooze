@@ -203,7 +203,10 @@ What counts as a trigger:
 What happens next:
 
 - The review is queued through the same path as a pasted URL, so intake lock, provider switches, the Fable block and the usage floor all apply. If one of them refuses it, the mention is tried again on later checks for up to a day.
-- If that PR is already queued or running, the mention is marked as handled and nothing new is queued. If the host already reviewed the PR's current commit, the normal "already reviewed" skip still applies.
+- If this host already reviewed the PR, the mention resumes that earlier review's session instead of starting a fresh one, even when nothing changed since. A resume always posts one follow-up review, so "check again" gets an answer. A fresh review on an unchanged commit would be skipped as already reviewed, and one that finds nothing new posts nothing. Merged and closed PRs are still refused.
+- If there is no earlier review with a saved session, the mention starts a fresh review.
+- If that PR is already queued or running, the mention is marked as handled and nothing new is queued.
+- After a restart, the first check runs about a minute after the server starts, then on the chosen interval.
 - The review shows who asked, with a link to the comment. The settings panel shows when the last check ran, how many reviews it queued, when the next one is due, and any error, such as `gh` not being signed in.
 
 Handled comments are remembered in `mention-watch.json` under the data home, so a restart does not review the same mention twice.

@@ -110,3 +110,12 @@ test("only the newest finished review per PR with something to fix is a candidat
   ], { now: NOW, prState, hasSession: (j) => !!j.sessionId });
   assert.deepEqual(picked.map((j) => j.id), ["new"]);
 });
+
+test("after a restart the first check runs within a minute, not a whole interval later", () => {
+  const resumer = createAutoResumer({ listJobs: () => [], hasSession: () => false, assess: async () => ({}), resume: async () => {}, now: () => NOW });
+  resumer.configure({ enabled: true, intervalMinutes: 30, startup: true });
+  assert.equal(resumer.status().nextRunAt, NOW + 60_000);
+  resumer.configure({ enabled: true, intervalMinutes: 30 });
+  assert.equal(resumer.status().nextRunAt, NOW + 30 * 60_000);
+  resumer.stop();
+});

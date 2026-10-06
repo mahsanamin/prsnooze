@@ -159,6 +159,9 @@ control a security surface, not a convenience feature.
   on a public repo it is what stops a stranger spending the host's plan and
   posting under the host's identity. It queues through `enqueueReview`, never
   around admission, and turning it on must not reach back into old mentions.
+  A mention on a PR this host already reviewed resumes that review (forced,
+  through `resumeReviewJob`) so the person who asked always gets a reply; a
+  fresh review there is skipped or posts nothing.
 - Auto-resume (`lib/auto-resume.js`) is off by default and only the settings
   session can turn it on or run it. New commits since the review are its only
   trigger; a reply alone stays a manual resume. It resumes through

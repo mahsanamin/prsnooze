@@ -138,6 +138,16 @@ const mentionWatcher = createMentionWatcher({
   dataHome: DATA_HOME,
   getLogin: () => getSelfLogin(),
   enqueue: (request) => enqueueReview(request),
+  // Forced, so "check again" on an unchanged PR still gets an answer. Merged or
+  // closed PRs and missing sessions still refuse; admission still applies.
+  resume: (jobId, { force, requestedBy }) => resumeReviewJob(jobId, { force, requestedBy }),
+  findResumable: (prUrl) => {
+    const target = normalizedPrUrl(prUrl);
+    const earlier = Array.from(jobs.values())
+      .filter((job) => job.state === "done" && reviewSessionId(job) && normalizedPrUrl(job.prUrl) === target)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+    return earlier?.id || null;
+  },
   isPrActive: (prUrl) => {
     const target = normalizedPrUrl(prUrl);
     return Array.from(jobs.values()).some((job) => isJobActive(job) && normalizedPrUrl(job.prUrl) === target);
@@ -1194,9 +1204,9 @@ function start(port = PORT, { banner = false } = {}) {
   const statusRefreshTimer = setInterval(() => { refreshPrStates().catch(() => {}); }, 60_000);
   statusRefreshTimer.unref();
   server.once("close", () => clearInterval(statusRefreshTimer));
-  mentionWatcher.configure(runtimeSettings.mentionWatch);
+  mentionWatcher.configure({ ...runtimeSettings.mentionWatch, startup: true });
   server.once("close", () => mentionWatcher.stop());
-  autoResumer.configure(runtimeSettings.autoResume);
+  autoResumer.configure({ ...runtimeSettings.autoResume, startup: true });
   server.once("close", () => autoResumer.stop());
   server.listen(port, "0.0.0.0", () => {
     const addr = server.address();
