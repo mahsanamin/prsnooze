@@ -482,7 +482,11 @@ const approveThrottle = (ip) => approveLimiter.check(ip);
 const approveFailed = (ip) => approveLimiter.failed(ip);
 const approveSucceeded = (ip) => approveLimiter.succeeded(ip);
 const settingsLimiter = createAttemptLimiter();
-const settingsSessions = require("./lib/settings-sessions").createSettingsSessions();
+const { createSettingsSessions, settingsPasswordFingerprint } = require("./lib/settings-sessions");
+const settingsSessions = createSettingsSessions({
+  dataHome: DATA_HOME,
+  passwordFingerprint: settingsPasswordFingerprint(SETTINGS_PASSWORD, IDENTITY.id),
+});
 const settingsToken = (req) => /^Bearer ([a-f0-9]{64})$/.exec(req.get("Authorization") || "")?.[1];
 
 // The owner's follow-up message route. It is the one job route that accepts the
@@ -508,8 +512,8 @@ async function authorizeSettings(req, res, next) {
   next();
 }
 
-app.post("/api/settings/session", authorizeSettings, (_req, res) => {
-  res.json(settingsSessions.issue());
+app.post("/api/settings/session", authorizeSettings, (req, res) => {
+  res.json(settingsSessions.issue({ remember: req.body?.remember === true }));
 });
 
 app.delete("/api/settings/session", (req, res) => {

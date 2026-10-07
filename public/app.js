@@ -1474,7 +1474,10 @@ let pendingAvatarDataUrl = null;
 let selectedAvatarId = null;
 const SETTINGS_SESSION_KEY = "prsnooze:settings-session";
 let settingsSession = null;
+// A remembered unlock lives in localStorage (every tab, 30 days); a normal one
+// in sessionStorage (this tab only). Either way the server decides validity.
 try { settingsSession = JSON.parse(sessionStorage.getItem(SETTINGS_SESSION_KEY)); } catch {}
+if (!settingsSession) { try { settingsSession = JSON.parse(localStorage.getItem(SETTINGS_SESSION_KEY)); } catch {} }
 updateSettingsUnlock();
 
 function updateSettingsUnlock() {
@@ -1488,6 +1491,7 @@ function updateSettingsUnlock() {
 function clearSettingsSession() {
   settingsSession = null;
   try { sessionStorage.removeItem(SETTINGS_SESSION_KEY); } catch {}
+  try { localStorage.removeItem(SETTINGS_SESSION_KEY); } catch {}
 }
 
 $("settings-lock")?.addEventListener("click", async () => {
@@ -1798,13 +1802,13 @@ settingsForm?.addEventListener("submit", async (event) => {
       const login = await fetch("/api/settings/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: settingsPassword.value }),
+        body: JSON.stringify({ password: settingsPassword.value, remember: !!$("settings-remember")?.checked }),
       });
       const session = await login.json();
       if (!login.ok) throw new Error(session.error || "Could not unlock settings.");
       settingsSession = session;
       settingsPassword.value = "";
-      try { sessionStorage.setItem(SETTINGS_SESSION_KEY, JSON.stringify(session)); } catch {}
+      try { (session.remember ? localStorage : sessionStorage).setItem(SETTINGS_SESSION_KEY, JSON.stringify(session)); } catch {}
       updateSettingsUnlock();
     }
     const response = await fetch("/api/settings", {

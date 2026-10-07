@@ -277,7 +277,8 @@
         <div class="modal-field">
           <input id="settings-password" type="password" placeholder="Settings password" autocomplete="current-password" />
         </div>
-        <div class="settings-help">Unlock settings for 8 hours in this tab. PR approval still requires its separate password.</div>
+        <label class="settings-remember"><input id="settings-remember" type="checkbox" /> Remember this browser for 30 days</label>
+        <div class="settings-help">Unlocks settings for 8 hours in this tab, or for 30 days in this browser if you tick the box. Server restarts keep you unlocked; changing the password locks every browser. PR approval still requires its separate password.</div>
         </div>
         <div id="settings-unlocked" hidden>
           <span class="settings-help">Settings unlocked for this tab.</span>

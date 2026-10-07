@@ -216,8 +216,10 @@ Click the **profile picture beside the logo** to open settings. To allow edits,
 set `PRSNOOZE_SETTINGS_PASSWORD` in `.env` and restart the local server. Docker
 users must also [pass the setting into the container](docs/usage.md#docker-settings-beyond-the-provider-selection). There is no
 default password. Settings unlock for eight hours in the current browser tab
-after the first successful save; the browser stores a temporary token, not
-your password.
+after the first successful save, or for 30 days in that browser if you tick
+**Remember this browser**. The browser stores a temporary token, not your
+password. Restarting the server keeps you unlocked; changing the password
+locks every browser.
 
 The menu lets you choose or upload a picture, enable or disable Claude and
 Codex, pause new reviews, change concurrency, and set a minimum remaining

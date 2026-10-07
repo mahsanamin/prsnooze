@@ -140,9 +140,13 @@ control a security surface, not a convenience feature.
 - `PRSNOOZE_SETTINGS_PASSWORD` is separate from
   `MANUAL_APPROVE_PASSWORD`. The former protects host configuration; it never
   authorises a GitHub review or weakens the forced-approval fitness gate.
-- Settings unlock tokens are settings-only, random, revocable, bounded in
-  memory, and expire after 8 hours without sliding renewal. Never persist the
-  password in the browser or accept a settings token on the approval route.
+- Settings unlock tokens are settings-only, random, revocable and bounded.
+  They expire after 8 hours, or 30 days when the owner ticks "remember this
+  browser", without sliding renewal. The server persists only SHA-256 digests
+  of tokens (mode 0600), tagged with a fingerprint of the settings password,
+  so a restart keeps sessions and a password change revokes all of them.
+  Never write a raw token or the password to disk, never persist the password
+  in the browser, and never accept a settings token on the approval route.
 - A review focus (`intent` on `POST /api/review`) is the owner's steer for one
   review and needs a live settings session, checked before anything is queued.
   That is the only place outside `/api/settings` that accepts the settings
