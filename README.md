@@ -120,7 +120,8 @@ not `localhost`. Allow access only from your trusted network.
 
 Paste an **open GitHub PR URL**, choose the provider if both are enabled, and
 click **Review PR**. Watch the result in the page and follow its link to GitHub.
-Low-risk, clean PRs may receive an approval. To require comments only from
+Low-risk, clean PRs may receive an approval, but only when CI on the reviewed
+commit has passed and a passing check actually exercised the change. To require comments only from
 automated reviews, set `AUTO_APPROVE=false` in `.env` before starting.
 
 Keep this terminal open. Press **Ctrl+C** to stop it.

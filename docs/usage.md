@@ -128,9 +128,13 @@ For the same reason prsnooze marks its own clones under `~/.prsnooze/repos/` as 
 
 Auto-approve (`AUTO_APPROVE=true`, the default) fires only when **all** of these hold:
 
-1. The reviewer found no critical and no major issues.
-2. Its **risk score** for the diff is ≤ 20.
-3. Nothing in the diff looks like a real behaviour change in a scary place.
+1. Every CI check on the reviewed commit has finished, at least one passed, and none failed. prsnooze checks this itself before the review starts. If CI is red, still running, missing, or cannot be read, that run can comment but not approve.
+2. The reviewer can name a passing check, or a command it ran, that actually exercised the changed code. The PR description, the author's measurements and other people's approvals do not count. If the one check that would test the change was skipped, it comments and says what is still unverified.
+3. The reviewer found no critical and no major issues.
+4. Its **risk score** for the diff is ≤ 20.
+5. Nothing in the diff looks like a real behaviour change in a scary place.
+
+Who asked for the review does not matter here. A review queued from the browser, from a colleague's `snooze` CLI, or by a mention goes through the same checks.
 
 How the score works — the reviewer looks for genuine behaviour changes, not just scary-looking filenames (a typo fix in an auth file is not an auth change):
 

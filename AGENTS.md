@@ -93,6 +93,22 @@ password could approve a PR prsnooze had just flagged critical.
 - Every refusal must say what is open, how to clear it, and who to ask instead.
   An unactionable refusal sends people looking for a way around it.
 
+## Automatic approval needs verification
+
+Anyone may queue a review (browser, `snooze` CLI, a mention), and most of the
+org can be a requested reviewer, so who asked is never what permits an
+approval. Reading the diff is not verification either.
+
+- `applyCiGate` in `lib/review-job.js` runs before the first review and before
+  every follow-up. It reads check runs and statuses for the exact reviewed SHA
+  and turns auto-approve off for that run when CI failed, is still running,
+  has no passing check, or cannot be read. Keep it failing closed.
+- Skipped checks do not block on their own; they go into the prompt so the
+  reviewer can see when the check that would exercise the change never ran.
+- The approval block requires named evidence (`verified-by=[...]`). The PR
+  description, the author's measurements, another approval or a bot summary do
+  not count. Do not loosen this into "CI is green, so approve".
+
 ## Cross-instance invariants
 
 The `snooze` CLI lets one machine queue work on another. That makes remote

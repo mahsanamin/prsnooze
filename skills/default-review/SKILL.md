@@ -113,11 +113,13 @@ gh pr review <N> --comment --body-file /tmp/prsnooze-review-<N>.md
 
 …or `--approve` if the enclosing prompt's approval policy grants it AND you found nothing new.
 
+An approval is the one place a short prose body is required. An empty body or "LGTM" is not an approval anyone can rely on. Use the format the approval policy gives (what changed, what you checked, what verified it, why the risk is low). If you cannot fill those lines honestly, post `--comment` instead.
+
 Trust gh's exit code. Do not retry on success metadata.
 
 ## What NOT to do
 
-- Don't write prose intros, summaries, or verdict paragraphs.
+- Don't write prose intros, summaries, or verdict paragraphs (except the required approval note in step 8).
 - Don't include "things I deliberately did NOT flag" sections.
 - Don't echo concerns already raised by another reviewer.
 - Don't include `Review confidence:` / `Self-review:` / `Test signal:` lines.
