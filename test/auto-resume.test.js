@@ -119,3 +119,27 @@ test("after a restart the first check runs within a minute, not a whole interval
   assert.equal(resumer.status().nextRunAt, NOW + 30 * 60_000);
   resumer.stop();
 });
+
+test("a pass with nothing to check does not stop later passes", async () => {
+  // A pass with no candidates hits no await, so it used to finish before
+  // `running` was assigned and leave a settled promise there. Every later poll
+  // then returned that promise and the watcher went quiet for good while its
+  // timer kept firing.
+  let clock = NOW;
+  const jobs = [];
+  const resumed = [];
+  const resumer = createAutoResumer({
+    listJobs: () => jobs,
+    hasSession: (j) => !!j.sessionId,
+    assess: async () => pushed(),
+    resume: async (id) => { resumed.push(id); },
+    now: () => clock,
+  });
+  await resumer.pollOnce();
+  assert.equal(resumer.status().lastRunAt, NOW);
+  clock += 60_000;
+  jobs.push(job({ finishedAt: clock - 1000 }));
+  await resumer.pollOnce();
+  assert.equal(resumer.status().lastRunAt, NOW + 60_000);
+  assert.deepEqual(resumed, ["job-1"]);
+});
