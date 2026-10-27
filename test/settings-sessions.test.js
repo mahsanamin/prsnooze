@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { createSettingsSessions, settingsPasswordFingerprint, REMEMBER_TTL_MS } = require("../lib/settings-sessions");
+const { createSettingsSessions, settingsPasswordFingerprint } = require("../lib/settings-sessions");
 
 test("settings sessions are random, revocable, bounded and expire without renewal", () => {
   let time = 100;
@@ -28,15 +28,15 @@ test("settings sessions are random, revocable, bounded and expire without renewa
   assert.equal(createSettingsSessions().valid(last.token), false);
 });
 
-test("a remembered session lasts 30 days, still without renewal", () => {
+test("a remembered session does not expire, but locking ends it", () => {
   let time = 0;
   const sessions = createSettingsSessions({ now: () => time });
   const remembered = sessions.issue({ remember: true });
-  assert.equal(remembered.expiresAt, REMEMBER_TTL_MS);
+  assert.equal(remembered.expiresAt, null);
   assert.equal(remembered.remember, true);
-  time = REMEMBER_TTL_MS - 1;
+  time = 10 * 365 * 24 * 60 * 60 * 1000;
   assert.equal(sessions.valid(remembered.token), true);
-  time = REMEMBER_TTL_MS;
+  sessions.revoke(remembered.token);
   assert.equal(sessions.valid(remembered.token), false);
 });
 

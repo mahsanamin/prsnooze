@@ -1474,7 +1474,7 @@ let pendingAvatarDataUrl = null;
 let selectedAvatarId = null;
 const SETTINGS_SESSION_KEY = "prsnooze:settings-session";
 let settingsSession = null;
-// A remembered unlock lives in localStorage (every tab, 30 days); a normal one
+// A remembered unlock lives in localStorage (every tab, until locked); a normal one
 // in sessionStorage (this tab only). Either way the server decides validity.
 try { settingsSession = JSON.parse(sessionStorage.getItem(SETTINGS_SESSION_KEY)); } catch {}
 if (!settingsSession) { try { settingsSession = JSON.parse(localStorage.getItem(SETTINGS_SESSION_KEY)); } catch {} }
@@ -1482,7 +1482,8 @@ updateSettingsUnlock();
 
 function updateSettingsUnlock() {
   if (settingsSession && (!/^[a-f0-9]{64}$/.test(settingsSession.token)
-    || !Number.isFinite(settingsSession.expiresAt) || settingsSession.expiresAt <= Date.now())) clearSettingsSession();
+    || (settingsSession.expiresAt === null ? !settingsSession.remember
+      : !Number.isFinite(settingsSession.expiresAt) || settingsSession.expiresAt <= Date.now()))) clearSettingsSession();
   $("settings-credentials").hidden = !!settingsSession;
   $("settings-unlocked").hidden = !settingsSession;
   $("intent-wrap").hidden = !settingsSession;

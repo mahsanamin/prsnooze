@@ -156,10 +156,13 @@ control a security surface, not a convenience feature.
 - `PRSNOOZE_SETTINGS_PASSWORD` is separate from
   `MANUAL_APPROVE_PASSWORD`. The former protects host configuration; it never
   authorises a GitHub review or weakens the forced-approval fitness gate.
-- Settings unlock tokens are settings-only, random, revocable and bounded.
-  They expire after 8 hours, or 30 days when the owner ticks "remember this
-  browser", without sliding renewal. The server persists only SHA-256 digests
-  of tokens (mode 0600), tagged with a fingerprint of the settings password,
+- Settings unlock tokens are settings-only, random, revocable and bounded in
+  count. A normal unlock expires after 8 hours without sliding renewal. When
+  the owner ticks "remember this browser" the token has no expiry, by the
+  owner's choice (2026-10-27): it ends on Lock settings or a password change.
+  It still never authorises approval, so the approve password stays per
+  click. The server persists only SHA-256 digests of tokens (mode 0600),
+  tagged with a fingerprint of the settings password,
   so a restart keeps sessions and a password change revokes all of them.
   Never write a raw token or the password to disk, never persist the password
   in the browser, and never accept a settings token on the approval route.

@@ -416,9 +416,10 @@ Providers that do not expose plan telemetry are not measured against that floor.
 These controls require `PRSNOOZE_SETTINGS_PASSWORD`, which is deliberately
 separate from `MANUAL_APPROVE_PASSWORD`. Saving a setting never grants permission
 to approve a PR. The first save unlocks settings for 8 hours in the current
-tab, including across refreshes. Tick **Remember this browser for 30 days** to
-unlock every tab in that browser for 30 days instead. The browser stores only a
-temporary bearer token (session storage, or local storage when remembered),
+tab, including across refreshes. Tick **Remember this browser until I lock it**
+to keep every tab in that browser unlocked with no time limit instead. It ends
+when you press **Lock settings** or change the password. The browser stores only a
+bearer token (session storage, or local storage when remembered),
 never the password. The server keeps a SHA-256 digest of each token in
 `settings-sessions.json` under the data home, so a restart does not log you
 out. Use **Lock settings** to revoke a token. Changing
