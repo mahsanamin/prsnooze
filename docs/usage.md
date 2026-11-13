@@ -323,10 +323,14 @@ or `mise install` after configuring that manager's Node.js plugin/backend. Node
 tracks the Docker image rather than the versions already installed on any one
 developer machine.
 
-`bin/prsnooze-service install` records the absolute path of the `node` active
-at install time so the supervisor can find it after login or reboot. Changing
-the version-manager pin does not change an existing service; run the install
-command again from a shell using the desired Node version to update it.
+`bin/prsnooze-service install` records an absolute `node` path so the
+supervisor can find it after login or reboot. When that `node` comes from a
+mise or asdf install, it records the manager's `shims/node` instead, which
+resolves the repo's pin each time the service starts: a pin bump or a pruned
+old version does not strand the service, as long as the pinned version is
+installed. Any other `node` (nvm, a system package) is recorded exactly as
+found, so changing its version means running the install command again from a
+shell using the desired Node version.
 
 Docker is the easier route for a machine several people will use, since it brings its own `node`, `git`, `gh`, Claude Code, and Codex CLI:
 

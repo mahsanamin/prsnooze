@@ -141,3 +141,46 @@ printf '%s\\n' 'service environment confirmed'
     box.cleanup();
   }
 });
+
+// Fakes a version manager's data dir: one versioned install and the shim that
+// sits beside `installs/`. Each answers --port so the script can start, and
+// otherwise says which of them the service would have been launched with.
+function fakeVersionManager(box, { shimWorks }) {
+  const data = path.join(box.home, "vm");
+  const installBin = path.join(data, "installs", "node", "9.9.9", "bin");
+  const shims = path.join(data, "shims");
+  fs.mkdirSync(installBin, { recursive: true });
+  fs.mkdirSync(shims);
+  const fake = (name, extra = "") => `#!/bin/sh
+${extra}if [ "$2" = "--port" ]; then printf '%s\\n' '${box.port}'; exit 0; fi
+printf '%s\\n' '${name} used'
+`;
+  fs.writeFileSync(path.join(installBin, "node"), fake("versioned install"));
+  fs.writeFileSync(
+    path.join(shims, "node"),
+    fake("shim", shimWorks ? "" : "[ \"$1\" = \"--version\" ] && exit 1\n"),
+  );
+  fs.chmodSync(path.join(installBin, "node"), 0o755);
+  fs.chmodSync(path.join(shims, "node"), 0o755);
+  return { PATH: `${installBin}:${box.env.PATH}` };
+}
+
+test("the service launches a version manager's shim, not one pinned install", { skip: shellless }, async () => {
+  const box = await sandbox();
+  try {
+    const result = await run(["doctor"], { ...box.env, ...fakeVersionManager(box, { shimWorks: true }) });
+    assert.match(result.stdout, /shim used/);
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("a shim that cannot run from the repo falls back to the install that can", { skip: shellless }, async () => {
+  const box = await sandbox();
+  try {
+    const result = await run(["doctor"], { ...box.env, ...fakeVersionManager(box, { shimWorks: false }) });
+    assert.match(result.stdout, /versioned install used/);
+  } finally {
+    box.cleanup();
+  }
+});

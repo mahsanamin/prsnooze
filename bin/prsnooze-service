@@ -56,6 +56,26 @@ if [ -z "$NODE_BIN" ]; then
   exit 1
 fi
 
+# The node a supervisor should launch. Under mise or asdf, `command -v node`
+# can be one versioned install (…/installs/node/22.23.2/bin/node), and
+# recording that would tie the service to a version the manager later prunes
+# or the repo's pin moves past. The manager's shim beside `installs/` resolves
+# the pin from the working directory on every start, so prefer it once it
+# proves it can run from the repo. Anything else is recorded as it is.
+service_node() {
+  case "$NODE_BIN" in
+    */installs/*)
+      local shim="${NODE_BIN%%/installs/*}/shims/node"
+      if [ -x "$shim" ] && (cd "$ROOT" && "$shim" --version) >/dev/null 2>&1; then
+        printf '%s\n' "$shim"
+        return
+      fi
+      ;;
+  esac
+  printf '%s\n' "$NODE_BIN"
+}
+SERVICE_NODE="$(service_node)"
+
 PORT_RESOLVED="$("$NODE_BIN" "$ROOT/lib/instance.js" --port)"
 URL="http://localhost:$PORT_RESOLVED"
 
@@ -426,7 +446,7 @@ install_launchd() {
   mkdir -p "$(dirname "$PLIST")"
   local path_esc node_esc root_esc
   path_esc="$(printf '%s' "$PATH" | xml_escape)"
-  node_esc="$(printf '%s' "$NODE_BIN" | xml_escape)"
+  node_esc="$(printf '%s' "$SERVICE_NODE" | xml_escape)"
   root_esc="$(printf '%s' "$ROOT" | xml_escape)"
 
   cat >"$PLIST" <<PLISTEOF
@@ -502,7 +522,7 @@ WorkingDirectory=$ROOT
 # --check-warn: log a failed preflight check and start anyway. At boot there is
 # nobody to read a refusal, and a transient network check must not keep the
 # server down.
-ExecStart=$NODE_BIN $ROOT/bin/start.js --check-warn
+ExecStart=$SERVICE_NODE $ROOT/bin/start.js --check-warn
 # claude, gh and git have to be findable from a non-login service environment.
 Environment=PATH=$PATH
 $(extra_env_systemd)Restart=always
@@ -570,7 +590,7 @@ cmd_doctor() {
       -u CLAUDE_CODE_OAUTH_TOKEN \
       -u ANTHROPIC_API_KEY \
       -u ANTHROPIC_AUTH_TOKEN \
-      "$NODE_BIN" "$ROOT/bin/start.js" --check
+      "$SERVICE_NODE" "$ROOT/bin/start.js" --check
 }
 
 cmd_help() {
